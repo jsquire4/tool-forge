@@ -1,0 +1,42 @@
+[
+  {
+    "id": "gs-{{toolname}}-001",
+    "description": "trigger phrase — {{description_of_what_this_tests}}",
+    "input": { "message": "{{natural_language_prompt}}" },
+    "expect": {
+      "toolsCalled": ["{{tool_name}}"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["{{proof_value_1}}", "{{proof_value_2}}"],
+      "responseContainsAny": [["{{synonym_1a}}", "{{synonym_1b}}"]],
+      "responseNotContains": ["I don't know", "no information"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-{{toolname}}-002",
+    "description": "rephrased — {{description}}",
+    "input": { "message": "{{rephrased_prompt}}" },
+    "expect": {
+      "toolsCalled": ["{{tool_name}}"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["{{proof_value}}"],
+      "responseContainsAny": [["{{synonym_group}}"]],
+      "responseNotContains": ["I don't know"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-{{toolname}}-003",
+    "description": "no raw JSON leak",
+    "input": { "message": "{{trigger_phrase}}" },
+    "expect": {
+      "toolsCalled": ["{{tool_name}}"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseNotContains": ["fetchedAt", "\"tool\":", "\"error\":", "undefined"],
+      "maxLatencyMs": 30000
+    }
+  }
+]

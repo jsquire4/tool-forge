@@ -1,0 +1,87 @@
+[
+  {
+    "id": "gs-get-weather-001",
+    "description": "trigger phrase — direct weather question",
+    "input": { "message": "What's the weather in Paris?" },
+    "expect": {
+      "toolsCalled": ["get_weather"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["Paris"],
+      "responseContainsAny": [["temperature", "degrees", "°", "temp"]],
+      "responseNotContains": ["I don't know", "no information"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-get-weather-002",
+    "description": "trigger phrase — asking about temperature",
+    "input": { "message": "How cold is it in Tokyo right now?" },
+    "expect": {
+      "toolsCalled": ["get_weather"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["Tokyo"],
+      "responseContainsAny": [["temperature", "degrees", "°", "cold", "warm"]],
+      "responseNotContains": ["I don't know", "unable to"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-get-weather-003",
+    "description": "trigger phrase — general conditions",
+    "input": { "message": "What are the current conditions in London?" },
+    "expect": {
+      "toolsCalled": ["get_weather"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["London"],
+      "responseContainsAny": [
+        ["weather", "conditions", "temperature"],
+        ["humidity", "wind", "°"]
+      ],
+      "responseNotContains": ["I don't know"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-get-weather-004",
+    "description": "rephrased — casual wording",
+    "input": { "message": "Is it raining in Seattle?" },
+    "expect": {
+      "toolsCalled": ["get_weather"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["Seattle"],
+      "responseContainsAny": [["rain", "cloud", "clear", "sun", "weather", "conditions"]],
+      "responseNotContains": ["I don't know", "no information"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-get-weather-005",
+    "description": "no raw JSON leak",
+    "input": { "message": "Tell me the weather in Berlin" },
+    "expect": {
+      "toolsCalled": ["get_weather"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseNotContains": ["fetchedAt", "\"tool\":", "\"error\":", "undefined", "null"],
+      "maxLatencyMs": 30000
+    }
+  },
+  {
+    "id": "gs-get-weather-006",
+    "description": "disambiguation — current weather not forecast",
+    "input": { "message": "What's it like outside in Chicago right now?" },
+    "expect": {
+      "toolsCalled": ["get_weather"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["Chicago"],
+      "responseContainsAny": [["temperature", "conditions", "weather", "°"]],
+      "responseNotContains": ["forecast", "tomorrow", "next week"],
+      "maxLatencyMs": 30000
+    }
+  }
+]

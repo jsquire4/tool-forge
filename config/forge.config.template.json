@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_comment": "Optional configuration that front-loads answers to common skill questions. Delete fields you don't need — all are optional. The skills work via dialogue alone without this file.",
+
+  "project": {
+    "name": "my-project",
+    "toolsDir": "src/tools",
+    "testsDir": "src/tools/__tests__",
+    "evalsDir": "evals/dataset",
+    "barrelsFile": "src/tools/tools.exports.ts"
+  },
+
+  "language": "typescript",
+
+  "validation": {
+    "library": "zod",
+    "_alternatives": ["pydantic", "joi", "json-schema", "struct-tags"]
+  },
+
+  "testing": {
+    "framework": "jest",
+    "_alternatives": ["vitest", "pytest", "go-test", "mocha"],
+    "command": "npx jest --passWithNoTests"
+  },
+
+  "typeCheck": {
+    "command": "npx tsc --noEmit",
+    "_comment": "Set to null if your stack doesn't have a type checker"
+  },
+
+  "auth": {
+    "contextField": "context.auth",
+    "type": "jwt",
+    "_alternatives": ["api-key", "oauth", "service-account"]
+  },
+
+  "client": {
+    "contextField": "context.client",
+    "type": "http",
+    "_comment": "The API client your tools use. Could be HTTP, gRPC, SDK wrapper, etc."
+  },
+
+  "hitl": {
+    "enabled": false,
+    "framework": null,
+    "_comment": "Set to true and specify framework (e.g., 'langgraph') if you use human-in-the-loop confirmation for write tools"
+  },
+
+  "mcp": {
+    "defaultTransport": "stdio",
+    "_alternatives": ["streamable-http"],
+    "serverPrefix": "my-project",
+    "_comment": "Used by /forge-mcp to name the generated MCP server"
+  },
+
+  "evals": {
+    "goldenDir": "evals/dataset/golden",
+    "labeledDir": "evals/dataset/labeled",
+    "overlapMapFile": "evals/tool-overlap-map.json",
+    "seedManifestFile": "evals/seed-manifest.json",
+    "_comment": "Paths are relative to project root"
+  }
+}

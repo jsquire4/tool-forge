@@ -1,0 +1,9 @@
+{
+  "{{tool_name}}": {
+    "overlaps": ["{{neighbor_tool_1}}", "{{neighbor_tool_2}}"],
+    "clusters": [
+      ["{{tool_name}}", "{{neighbor_tool_1}}", "{{neighbor_tool_2}}"]
+    ],
+    "reason": "{{human_readable_explanation_of_why_these_tools_overlap}}"
+  }
+}

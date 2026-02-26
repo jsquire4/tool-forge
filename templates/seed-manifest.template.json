@@ -1,0 +1,24 @@
+{
+  "_comment": "Seed manifest — maps template paths to known fixed values. Used by {{seed:path}} tokens in eval JSON. Values must match your seed data script exactly.",
+
+  "entities": {
+    "primary": ["{{entity_1}}", "{{entity_2}}", "{{entity_3}}"],
+    "secondary": ["{{entity_4}}", "{{entity_5}}"],
+    "all": ["{{entity_1}}", "{{entity_2}}", "{{entity_3}}", "{{entity_4}}", "{{entity_5}}"]
+  },
+
+  "quantities": {
+    "{{entity_1}}": { "initial": 10, "current": 7 },
+    "{{entity_2}}": { "initial": 5, "current": 5 }
+  },
+
+  "totals": {
+    "{{metric_1}}": "{{formatted_value}}",
+    "{{metric_2}}": "{{formatted_value}}"
+  },
+
+  "metadata": {
+    "currency": "USD",
+    "locale": "en-US"
+  }
+}

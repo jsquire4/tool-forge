@@ -53,6 +53,9 @@ LabeledEvalCase {
 
     noToolErrors?:     boolean
 
+    // Parameter assertions (did the model pass the right arguments?)
+    toolParams?:           ToolParamAssertion[]
+
     // Response quality assertions (all deterministic)
     responseNonEmpty?:     boolean
     responseContains?:     string[]
@@ -77,6 +80,46 @@ LabeledEvalCase {
 - **straightforward** — Clear multi-tool tasks. Obvious which tools to use and in what combination.
 - **ambiguous** — Multiple valid interpretations or tool combinations. Tests the agent's judgment.
 - **edge** — Adversarial inputs, prompt injection, off-topic, contradictions. Tests robustness.
+
+---
+
+## ToolParamAssertion
+
+Asserts that the model passed correct arguments to a tool call. This catches a failure class that routing assertions miss: the model calls the right tool but passes wrong, missing, or hallucinated parameters.
+
+```
+ToolParamAssertion {
+  tool:       string              // Which tool call to check
+  paramName:  string              // Which parameter to assert on
+  assertion:  'equals' | 'contains' | 'oneOf' | 'exists' | 'notExists' | 'matches'
+  value?:     string | string[]   // Expected value(s) — not needed for exists/notExists
+}
+```
+
+### Assertion Types
+
+- **equals** — Exact match (case-sensitive). `{ tool: "get_weather", paramName: "city", assertion: "equals", value: "Paris" }`
+- **contains** — Substring match. `{ paramName: "query", assertion: "contains", value: "weather" }`
+- **oneOf** — Value matches any in the list. `{ paramName: "units", assertion: "oneOf", value: ["metric", "imperial"] }`
+- **exists** — Parameter was provided (any value). `{ paramName: "city", assertion: "exists" }`
+- **notExists** — Parameter was NOT provided (catches hallucinated params). `{ paramName: "country_code", assertion: "notExists" }`
+- **matches** — Regex match. `{ paramName: "date", assertion: "matches", value: "^\\d{4}-\\d{2}-\\d{2}$" }`
+
+### When to Use
+
+- **Golden evals:** Assert the obvious parameter. "What's the weather in Paris?" → `city` equals `"Paris"` (or contains `"Paris"`).
+- **Labeled straightforward:** Assert parameters across multiple tool calls. "Weather and air quality in Beijing" → `get_weather.city` contains `"Beijing"` AND `get_air_quality.city` contains `"Beijing"`.
+- **Labeled ambiguous:** Use `oneOf` for parameters with valid alternatives. Units could be `"metric"` or `"imperial"` depending on user locale.
+- **Edge cases:** Use `notExists` to catch hallucinated parameters the schema doesn't define.
+
+### Rules
+
+- Parameter assertions check the arguments the model SENT to the tool, not the tool's response.
+- Use `contains` over `equals` when the model might normalize the input (e.g., `"Paris"` vs `"Paris, FR"` vs `"paris"`).
+- Use `oneOf` when multiple values are acceptable (enum fields, locale-dependent defaults).
+- Use template tokens (`{{seed:*}}`) in values for data-dependent parameters.
+- If the tool wasn't called (routing assertion already failed), parameter assertions are skipped.
+- When `toolsAcceptable` is used, parameter assertions apply only if the tool was actually called.
 
 ---
 

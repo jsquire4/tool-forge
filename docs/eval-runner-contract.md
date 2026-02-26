@@ -75,9 +75,10 @@ AgentResponse {
 }
 
 ToolCallRecord {
-  name:      string   // Tool name (e.g., "get_weather")
-  success:   boolean  // Did the tool execute without error?
-  durationMs: number  // Time for this individual tool call
+  name:      string                    // Tool name (e.g., "get_weather")
+  success:   boolean                   // Did the tool execute without error?
+  durationMs: number                   // Time for this individual tool call
+  params:    Record<string, unknown>   // Arguments the model passed to the tool
 }
 ```
 
@@ -157,6 +158,7 @@ Template tokens can appear in these assertion fields only:
 - `responseContains` values
 - `responseContainsAny` values (within inner arrays)
 - `responseNotContains` values
+- `toolParams[].value` values
 
 Tokens never appear in `input.message`, `toolsCalled`, or `toolsAcceptable`.
 
@@ -166,6 +168,7 @@ When a token resolves to UNRESOLVED:
 - **In `responseContains`:** Skip this single assertion value. Log a warning. Do NOT fail the case.
 - **In `responseContainsAny`:** Remove the unresolved value from its synonym group. If the entire group becomes empty, skip that group.
 - **In `responseNotContains`:** Skip this single value. (An unresolvable negative assertion is safe to skip.)
+- **In `toolParams[].value`:** Skip this single parameter assertion. Log a warning.
 
 ---
 
@@ -234,7 +237,47 @@ if expect.toolsNotCalled:
     assert forbidden NOT IN actualNames
 ```
 
-### 2. noToolErrors
+### 2. toolParams (parameter-level assertions)
+
+```
+if expect.toolParams:
+  for each paramAssertion in expect.toolParams:
+    // Find the matching tool call
+    toolCall = response.toolCalls.find(tc => tc.name === paramAssertion.tool)
+    if !toolCall: skip (tool wasn't called — routing assertion already handles this)
+
+    actualValue = toolCall.params[paramAssertion.paramName]
+    resolvedExpected = paramAssertion.value
+      ? resolveToken(paramAssertion.value, seed, snapshot)
+      : null
+
+    switch paramAssertion.assertion:
+      case 'equals':
+        assert String(actualValue) === resolvedExpected
+      case 'contains':
+        assert String(actualValue).includes(resolvedExpected)
+      case 'oneOf':
+        assert resolvedExpected.includes(String(actualValue))  // value is string[]
+      case 'exists':
+        assert actualValue !== undefined
+      case 'notExists':
+        assert actualValue === undefined
+      case 'matches':
+        assert new RegExp(resolvedExpected).test(String(actualValue))
+```
+
+**Agent endpoint requirement:** The `ToolCallRecord` must include a `params` field containing the arguments the model sent to the tool:
+
+```
+ToolCallRecord {
+  name:      string
+  success:   boolean
+  durationMs: number
+  params:    Record<string, unknown>  // The arguments the model passed
+}
+```
+
+### 3. noToolErrors
 
 ```
 if expect.noToolErrors:
@@ -242,7 +285,7 @@ if expect.noToolErrors:
     assert tc.success === true
 ```
 
-### 3. responseNonEmpty
+### 4. responseNonEmpty
 
 ```
 if expect.responseNonEmpty:

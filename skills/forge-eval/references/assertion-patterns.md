@@ -183,3 +183,83 @@ This tool must NOT be called (e.g., on an injection attempt).
 "toolsAcceptable": [["__none__"]]
 ```
 The agent should answer from general knowledge without calling any tools.
+
+---
+
+## Parameter Assertions
+
+Checks that the model passed correct arguments to the tool. This catches a failure class that routing assertions miss entirely: the model calls the right tool but passes wrong, missing, or hallucinated parameters.
+
+### Why This Matters
+
+BFCL and Google ADK both test parameter-level accuracy. Without it, your evals only prove the model picked the right tool — not that it used it correctly. A model that calls `get_weather` with `city: "the weather"` instead of `city: "Paris"` passes all routing assertions and all response assertions (if the tool errors gracefully and the model recovers). The parameter assertion catches it.
+
+### Assertion Types
+
+```json
+"toolParams": [
+  { "tool": "get_weather", "paramName": "city", "assertion": "contains", "value": "Paris" },
+  { "tool": "get_weather", "paramName": "units", "assertion": "oneOf", "value": ["metric", "imperial"] }
+]
+```
+
+| Assertion | Use When | Example |
+|-----------|----------|---------|
+| `equals` | Exact value known | `city` = `"Paris"` |
+| `contains` | Model may normalize | `city` contains `"Tokyo"` (could be `"Tokyo"` or `"Tokyo, JP"`) |
+| `oneOf` | Multiple valid values | `units` is `"metric"` or `"imperial"` |
+| `exists` | Parameter must be provided | `city` was sent (any value) |
+| `notExists` | Catch hallucinated params | `country_code` should not be sent if schema doesn't define it |
+| `matches` | Format validation | `date` matches `^\d{4}-\d{2}-\d{2}$` |
+
+### Golden Eval Example
+
+```json
+{
+  "id": "gs-get-weather-001",
+  "description": "trigger phrase — direct weather question",
+  "input": { "message": "What's the weather in Paris?" },
+  "expect": {
+    "toolsCalled": ["get_weather"],
+    "toolParams": [
+      { "tool": "get_weather", "paramName": "city", "assertion": "contains", "value": "Paris" }
+    ],
+    "noToolErrors": true,
+    "responseNonEmpty": true,
+    "responseContains": ["Paris"],
+    "responseContainsAny": [["temperature", "degrees", "°"]],
+    "maxLatencyMs": 30000
+  }
+}
+```
+
+### Multi-Tool Labeled Example
+
+```json
+{
+  "id": "ls-get-weather-001",
+  "description": "straightforward — weather + forecast synthesis",
+  "difficulty": "straightforward",
+  "input": { "message": "What's the weather in Tokyo today and what should I expect this week?" },
+  "expect": {
+    "toolsCalled": ["get_weather", "get_forecast"],
+    "toolParams": [
+      { "tool": "get_weather", "paramName": "city", "assertion": "contains", "value": "Tokyo" },
+      { "tool": "get_forecast", "paramName": "city", "assertion": "contains", "value": "Tokyo" }
+    ],
+    "noToolErrors": true,
+    "responseNonEmpty": true,
+    "responseContains": ["Tokyo"],
+    "maxLatencyMs": 30000
+  }
+}
+```
+
+### Rules
+
+- Use `contains` over `equals` by default — models normalize inputs in unpredictable ways
+- Use `oneOf` for enum fields where defaults may vary by context
+- Use `exists` sparingly — it's weak (any value passes). Prefer `contains` or `equals`.
+- Parameter assertions are SKIPPED if the tool wasn't called (routing already failed)
+- When `toolsAcceptable` is used, only assert params for tools that were actually called
+- Use `{{seed:*}}` in values for data-dependent parameters: `{ "assertion": "equals", "value": "{{seed:holdings.equities[0].symbol}}" }`

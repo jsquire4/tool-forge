@@ -1,5 +1,5 @@
 // ============================================================================
-// Meta-Eval Checks — Quality Floor for Generated Eval Cases
+// Meta-Eval Checks — PSEUDO-CODE (uses readFile stub)
 //
 // A mechanical linter that runs AGAINST the eval JSON files themselves (not
 // against an agent endpoint). Catches common generation failures before the

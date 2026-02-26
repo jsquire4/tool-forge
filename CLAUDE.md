@@ -6,7 +6,7 @@ Tool-Forge is a collection of Claude Code skills and templates for building LLM 
 
 ## Conventions
 
-- **Pseudo-code, not real code.** All templates use language-agnostic pseudo-code with `// EXTENSION POINT` comments. Never add framework-specific imports or decorators to templates.
+- **Pseudo-code vs real code.** Some templates are pseudo-code (conceptual, adapt to your stack); others are real code (MCP templates, weather example). See `docs/REAL-VS-PSEUDO.md`. Pseudo-code uses `// EXTENSION POINT` comments.
 - **Skills reference files, not inline.** SKILL.md files stay under ~400 lines. Detailed specs live in `references/`. Progressive disclosure.
 - **`{{placeholder}}` syntax.** Templates use `{{name}}`, `{{description}}`, etc. for values the skill fills in during dialogue. `// EXTENSION POINT` marks where the user's stack-specific code goes.
 - **No runnable code in the repo.** This is a skill + template library, not an npm package or CLI tool. There is no `package.json`, no `tsconfig.json`, no build step.
@@ -24,8 +24,7 @@ config/          — Optional configuration templates
 
 - When editing a SKILL.md, keep it under 400 lines. Move detailed specs to `references/`.
 - When editing templates, preserve all `// EXTENSION POINT` comments and `{{placeholder}}` tokens.
-- Templates use `.pseudo.ts` or `.pseudo.py` extensions to signal they are not runnable code.
-- JSON templates use `.template.json` extension.
+- **Naming:** `.pseudo.ts` / `.pseudo.py` = conceptual, not runnable. `.example.ts` = runnable example. `.template.ts` / `.template.py` = real code with `{{placeholders}}` (fill to run). JSON templates use `.template.json`.
 
 ## Skill Installation
 

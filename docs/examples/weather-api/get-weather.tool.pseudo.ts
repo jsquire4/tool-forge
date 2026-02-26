@@ -1,8 +1,8 @@
 // ============================================================================
-// get-weather.tool — Complete worked example
+// get-weather.tool — PSEUDO-CODE worked example
 //
 // This shows what /forge-tool produces for a weather API tool.
-// Adapt the pseudo-code to your stack (Zod → your validator, etc.).
+// Adapt to your stack (Zod → your validator, etc.). Invalid as-is (placeholder imports).
 // ============================================================================
 
 import { VALIDATE } from '/* your validation library */';

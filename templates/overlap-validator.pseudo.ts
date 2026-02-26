@@ -1,5 +1,5 @@
 // ============================================================================
-// Overlap Map Validator — Pseudo-Code
+// Overlap Map Validator — PSEUDO-CODE
 //
 // Validates the tool overlap map for structural integrity and generates a
 // coverage gap report. Run this before generating evals or after adding a tool.

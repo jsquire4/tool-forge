@@ -1,5 +1,5 @@
 // ============================================================================
-// Eval Runner — Reference Implementation (Pseudo-Code)
+// Eval Runner — PSEUDO-CODE reference implementation
 //
 // This is NOT a runnable harness. It shows the runner contract in action so you
 // can adapt it to your stack. Every EXTENSION POINT marks where your stack-

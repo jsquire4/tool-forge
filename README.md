@@ -12,6 +12,10 @@ Structured dialogue skills for building LLM agent tools, eval suites, and MCP se
 | `/forge-eval` | Generate golden + labeled eval suites for a tool | Deterministic assertions, difficulty tiers, seed data templates |
 | `/forge-mcp` | Generate an MCP server from a ToolDefinition | Same tool spec → both agent tool and MCP server |
 
+**API TUI** — Discover APIs (OpenAPI + manifest), select endpoints without tools, create MCP/tools. Runs `cli/index.js`. See `docs/API-DISCOVERY.md`.
+
+**`/forge-verifier`** — Gap detection and verifier creation. Reports tools without verifier coverage, generates verifier stubs. Run `node cli/index.js --verifiers` for a quick gap report.
+
 Plus: pseudo-code templates, a worked example (weather API), and an architecture guide.
 
 ## Quick Start
@@ -106,11 +110,12 @@ skills/
   forge-tool/           # 10-phase tool creation workflow
   forge-eval/           # Golden + labeled eval generation
   forge-mcp/            # MCP server generation
-templates/              # Annotated pseudo-code with extension points
+templates/              # Pseudo-code + real MCP templates (see docs/REAL-VS-PSEUDO.md)
 docs/
   architecture.md       # 9-layer architecture guide
   blog-post.md          # The thesis explained
-  examples/weather-api/ # Complete worked example
+  REAL-VS-PSEUDO.md     # Which files are runnable vs conceptual
+  examples/weather-api/ # Worked example (tool=pseudo, MCP=real runnable)
 config/
   forge.config.template.json
 ```

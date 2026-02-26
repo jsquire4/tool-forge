@@ -1,5 +1,6 @@
 // ============================================================================
 // ToolResult — The universal return shape from a tool execution.
+// PSEUDO-CODE: Conceptual contract. Adapt to your stack.
 //
 // Every tool's execute() function returns this shape. It is the contract
 // between the tool layer and the agent loop. The agent reads `error` to

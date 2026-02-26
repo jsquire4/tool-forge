@@ -1,0 +1,5 @@
+# Transient TUI output — deleted after forge-tool consumes it
+forge-pending-tool.json
+
+# Project-specific tracking
+.claude/

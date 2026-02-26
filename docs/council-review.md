@@ -143,7 +143,7 @@ SKILL.md files stay under 400 lines with detail in `references/`. The `forge.con
 
 ### W5. The Pseudo-Code Approach Creates a Credibility Gap
 
-**Problem:** A first-time visitor who opens `tool-definition.pseudo.ts` sees code that won't compile with placeholder imports. This reads as "unfinished" unless they already understand the pseudo-code design choice. The MCP example (`get-weather.mcp.pseudo.ts`) is a notable exception — it has real SDK calls and would nearly compile.
+**Problem:** A first-time visitor who opens `tool-definition.pseudo.ts` sees code that won't compile with placeholder imports. This reads as "unfinished" unless they already understand the pseudo-code design choice. The MCP example (`get-weather.mcp.example.ts`) is now clearly marked as real runnable code; see `docs/REAL-VS-PSEUDO.md`.
 
 **Remedy:**
 - Add an explicit callout in the README's design decisions: "Templates use pseudo-code because the LLM IS the adapter — shipping runnable TypeScript would mislead Python developers."

@@ -1,7 +1,8 @@
 // ============================================================================
 // ToolDefinition — The universal shape for an LLM agent tool.
+// PSEUDO-CODE: Conceptual contract. Adapt to your stack.
 //
-// This is PSEUDO-CODE. It describes the contract, not a runnable implementation.
+// This describes the contract, not a runnable implementation.
 // Adapt the types and validation to your stack (TypeScript/Zod, Python/Pydantic,
 // Go/struct tags, etc.). The LLM using the /forge-tool skill will generate
 // real code from this shape.

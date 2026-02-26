@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_comment": "Manual endpoint manifest. Add endpoints here when OpenAPI discovery is unavailable. Forge uses this to propose tools.",
+  "baseUrl": "${API_BASE_URL}",
+  "endpoints": [
+    {
+      "path": "/api/v1/example",
+      "method": "GET",
+      "name": "get_example",
+      "description": "Retrieves example data from the API. Use when the user asks for examples.",
+      "params": {
+        "id": { "type": "string", "description": "Optional filter by ID" }
+      },
+      "requiresConfirmation": false
+    }
+  ]
+}

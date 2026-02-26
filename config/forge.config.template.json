@@ -10,6 +10,15 @@
     "barrelsFile": "src/tools/tools.exports.ts"
   },
 
+  "api": {
+    "discovery": {
+      "type": "openapi",
+      "url": "http://localhost:3333/api-json",
+      "_comment": "Or file: { \"type\": \"openapi\", \"file\": \"openapi.json\" }"
+    },
+    "manifestPath": "api-endpoints.json"
+  },
+
   "language": "typescript",
 
   "validation": {
@@ -59,5 +68,13 @@
     "overlapMapFile": "evals/tool-overlap-map.json",
     "seedManifestFile": "evals/seed-manifest.json",
     "_comment": "Paths are relative to project root"
+  },
+
+  "verification": {
+    "enabled": true,
+    "verifiersDir": "src/verification",
+    "barrelsFile": "src/verification/verifiers.exports.ts",
+    "orderPrefix": "A-",
+    "_comment": "Order categories: A=attribution, C=compliance, I=interface, R=risk, U=uncertainty"
   }
 }

@@ -9,7 +9,7 @@ This walkthrough shows what the `/forge-tool` → `/forge-eval` → `/forge-mcp`
 | File | Source Skill | Purpose |
 |------|-------------|---------|
 | `get-weather.tool.pseudo.ts` | `/forge-tool` | Tool implementation (pseudo-code) |
-| `get-weather.mcp.pseudo.ts` | `/forge-mcp` | MCP server generated from the ToolDefinition |
+| `get-weather.mcp.example.ts` | `/forge-mcp` | MCP server — **real runnable code** |
 | `get-weather.golden.json` | `/forge-eval` | 6 golden eval cases (single-tool routing) |
 | `get-weather.labeled.json` | `/forge-eval` | 9 labeled eval cases (multi-tool + adversarial) |
 
@@ -110,6 +110,6 @@ Labeled: 9 cases (see `get-weather.labeled.json`)
 
 3. **Study the ambiguous cases** — The `toolsAcceptable` field allows multiple valid strategies. "Should I bring an umbrella" could use weather alone, forecast alone, or both. All are correct.
 
-4. **Study the MCP server** — Compare `get-weather.tool.pseudo.ts` with `get-weather.mcp.pseudo.ts` to see how the same spec produces both formats.
+4. **Study the MCP server** — Compare `get-weather.tool.pseudo.ts` with `get-weather.mcp.example.ts` to see how the same spec produces both formats. The MCP example is real runnable code.
 
 5. **Adapt to your domain** — Replace "weather" with your domain. The patterns are the same: description contract, deterministic assertions, overlap-driven ambiguity testing.

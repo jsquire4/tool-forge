@@ -10,18 +10,26 @@ This skill is the entry point for adding a tool to your LLM agent. It conducts a
 
 **How it works:** You (Claude) are both orchestrator and developer. The user defines what to build. You challenge, refine, and build it. All code is your responsibility.
 
-> Before starting, read `references/tool-shape.md` for the ToolDefinition spec, `references/description-contract.md` for description formatting rules, and `references/extension-points.md` for stack adaptation guidance.
+> Before starting, read `references/tool-shape.md` for the ToolDefinition spec, `references/description-contract.md` for description formatting rules, and `references/extension-points.md` for stack adaptation guidance. If using the API TUI, read `references/pending-spec.md`.
 
 ---
 
 ## Phase 0: Read Current State
 
-Before any dialogue, discover what tools already exist.
+Before any dialogue, discover what tools already exist and check for a pending spec.
 
-1. Look for existing tool files in the project (glob for `*.tool.*`, `*_tool.*`, or similar patterns)
-2. For each file, extract the registered tool name
-3. If a `forge.config.json` exists in the project root, read it for stack-specific settings
-4. Present the list to the user:
+1. **Check for `forge-pending-tool.json`** in the project root. If it exists, read it. See `references/pending-spec.md`.
+2. Look for existing tool files in the project (glob for `*.tool.*`, `*_tool.*`, or similar patterns)
+3. For each file, extract the registered tool name
+4. If a `forge.config.json` exists in the project root, read it for stack-specific settings
+
+**If `forge-pending-tool.json` exists:**
+- Present: "I found a pending spec from the API TUI: `{{endpoint.method}} {{endpoint.path}}` → `{{endpoint.name}}`. Create this tool?"
+- If user confirms: **skip Phase 1**. Use the endpoint as the starting spec. Proceed to Phase 2 (skeptic gate, optionally shortened), then Phase 3.
+- If user declines: delete or rename the file, then proceed with normal flow below.
+
+**If no pending spec:**
+- Present the list to the user:
 
 ```
 Existing tools in the registry:
@@ -274,6 +282,10 @@ If `/forge-eval` is not installed, report that eval generation is available sepa
 ## Phase 10: Report Output
 
 When all tests are green:
+
+1. **If tool was created from a pending spec:** Delete or rename `forge-pending-tool.json` so it is not reused.
+2. **If `/forge-verifier` is available and verification is enabled:** Check verifier coverage. If tools exist without verifiers, add: "Note: X tools have no verifier coverage. Run `/forge-verifier` to create verifiers."
+3. Report:
 
 ```
 Tool `{{name}}` generated and tested.

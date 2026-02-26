@@ -1,7 +1,8 @@
 // ============================================================================
-// get-weather.mcp — MCP server generated from the ToolDefinition above
+// get-weather.mcp — REAL CODE (runnable example)
 //
-// This shows what /forge-mcp produces from the get_weather ToolDefinition.
+// MCP server generated from the get_weather ToolDefinition.
+// Run with: OPENWEATHER_API_KEY=xxx npx tsx get-weather.mcp.example.ts
 // ============================================================================
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

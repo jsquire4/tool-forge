@@ -1,5 +1,6 @@
 // ============================================================================
 // Barrel Registry — The drop-in tool registration pattern.
+// PSEUDO-CODE: Conceptual pattern. Adapt to your language.
 //
 // This file is the ONLY file you edit when adding a new tool. One export per
 // tool. Git auto-merges non-adjacent single-line additions cleanly, so

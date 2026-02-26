@@ -1,0 +1,17 @@
+{
+  "project": {
+    "name": "tool-forge",
+    "toolsDir": "templates",
+    "testsDir": "templates",
+    "evalsDir": "docs/examples/weather-api",
+    "barrelsFile": "templates/barrel-registry.pseudo.ts"
+  },
+  "api": {
+    "manifestPath": "config/api-endpoints.template.json"
+  },
+  "verification": {
+    "enabled": true,
+    "verifiersDir": "templates",
+    "barrelsFile": "templates/verifiers-barrel.pseudo.ts"
+  }
+}

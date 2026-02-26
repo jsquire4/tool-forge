@@ -1,0 +1,114 @@
+{
+  "description": "Semantic perturbation template — generates eval cases that test whether the agent routes on semantic intent rather than surface keywords. For each trigger phrase, produce two sets of perturbations.",
+
+  "triggerPhrase": "What's the weather in Paris?",
+  "expectedTool": "get_weather",
+
+  "shouldRouteIdentically": {
+    "description": "Semantically equivalent prompts with different surface forms. All should route to the same tool(s) as the trigger phrase. Tests that routing isn't keyword-dependent.",
+    "cases": [
+      {
+        "id": "sp-get-weather-same-001",
+        "description": "perturbation — same intent, formal register",
+        "input": { "message": "Could you provide the current meteorological conditions for the city of Paris?" },
+        "expect": {
+          "toolsCalled": ["get_weather"],
+          "noToolErrors": true,
+          "responseNonEmpty": true,
+          "responseContains": ["Paris"]
+        }
+      },
+      {
+        "id": "sp-get-weather-same-002",
+        "description": "perturbation — same intent, indirect phrasing",
+        "input": { "message": "I'm wondering what it's like outside in Paris at the moment" },
+        "expect": {
+          "toolsCalled": ["get_weather"],
+          "noToolErrors": true,
+          "responseNonEmpty": true,
+          "responseContains": ["Paris"]
+        }
+      },
+      {
+        "id": "sp-get-weather-same-003",
+        "description": "perturbation — same intent, embedded in context",
+        "input": { "message": "My friend in Paris just texted me — is it actually as cold there as she says?" },
+        "expect": {
+          "toolsAcceptable": [["get_weather"]],
+          "noToolErrors": true,
+          "responseNonEmpty": true,
+          "responseContains": ["Paris"]
+        }
+      }
+    ]
+  },
+
+  "shouldRouteDifferently": {
+    "description": "Prompts that LOOK similar to the trigger phrase (share surface keywords) but should route to a DIFFERENT tool or no tool. Tests that routing is based on semantic intent, not keyword matching.",
+    "cases": [
+      {
+        "id": "sp-get-weather-diff-001",
+        "description": "perturbation — keyword overlap but future tense (should route to forecast)",
+        "input": { "message": "What will the weather be in Paris next Thursday?" },
+        "expect": {
+          "toolsAcceptable": [["get_forecast"], ["get_weather", "get_forecast"]],
+          "noToolErrors": true,
+          "responseNonEmpty": true,
+          "responseContains": ["Paris"]
+        }
+      },
+      {
+        "id": "sp-get-weather-diff-002",
+        "description": "perturbation — keyword overlap but asking about climate (no tool needed)",
+        "input": { "message": "Why does Paris have such mild weather compared to other cities at the same latitude?" },
+        "expect": {
+          "toolsAcceptable": [["__none__"], ["get_weather"]],
+          "responseNonEmpty": true,
+          "responseNotContains": ["I don't know"]
+        }
+      },
+      {
+        "id": "sp-get-weather-diff-003",
+        "description": "perturbation — keyword overlap but asking about air quality",
+        "input": { "message": "Is the weather in Paris making the air quality bad today?" },
+        "expect": {
+          "toolsAcceptable": [
+            ["get_weather", "get_air_quality"],
+            ["get_air_quality"]
+          ],
+          "noToolErrors": true,
+          "responseNonEmpty": true,
+          "responseContains": ["Paris"]
+        }
+      }
+    ]
+  },
+
+  "generationGuidelines": {
+    "shouldRouteIdentically": [
+      "Change the register (formal ↔ casual ↔ technical)",
+      "Change the sentence structure (question → statement → indirect request)",
+      "Embed the intent in a larger context (story, conversation, planning)",
+      "Use synonyms for key domain terms (weather → conditions → climate → what it's like outside)",
+      "Remove the explicit tool-trigger keywords (don't say 'weather' at all)"
+    ],
+    "shouldRouteDifferently": [
+      "Keep the same domain keywords but change the temporal scope (now → next week)",
+      "Keep the same domain keywords but change the data type (temperature → air quality)",
+      "Keep the same domain keywords but make it a general knowledge question (why → historical context)",
+      "Keep the same domain keywords but change the action (lookup → compare → explain → predict)",
+      "Add a secondary intent that pulls toward a different tool"
+    ]
+  },
+
+  "integrationWithForgeEval": {
+    "description": "Semantic perturbation cases are a sub-category of labeled evals, filed under difficulty 'perturbation'. They are generated after the standard labeled tiers (straightforward, ambiguous, edge) as an optional quality pass.",
+    "fileConvention": "evals/<toolname>.perturbation.json — separate from labeled file for independent execution",
+    "countGuideline": "3 same-intent + 3 different-intent per trigger phrase. For a tool with 5 trigger phrases, that's 30 perturbation cases.",
+    "whenToGenerate": [
+      "After a routing bug is discovered (the perturbations catch similar bugs)",
+      "When a tool has high overlap weight with multiple neighbors",
+      "When the tool handles a broad domain (weather, finance, search) where surface keywords are highly shared"
+    ]
+  }
+}

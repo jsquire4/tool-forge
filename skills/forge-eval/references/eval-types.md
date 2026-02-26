@@ -80,22 +80,72 @@ LabeledEvalCase {
 
 ---
 
+## RegressionEvalCase
+
+Captures a specific bug that was found and fixed. Immutable once created — never modified, only archived when no longer applicable.
+
+```
+RegressionEvalCase {
+  id:          string    // Format: "rg-<toolname>-NNN"
+  description: string    // "regression — <what the bug was>"
+  difficulty:  'regression'
+  createdAt:   string    // ISO 8601 — when this case was created
+  bugRef:      string    // Issue number or commit hash of the fix
+  input: {
+    message:   string    // The exact prompt that triggered the bug
+  }
+  expect: {
+    toolsCalled?:         string[]
+    toolsAcceptable?:     string[][]
+    noToolErrors?:        boolean
+    responseNonEmpty?:    boolean
+    responseContains?:    string[]    // Use seed-stable values only (no snapshots)
+    responseContainsAny?: string[][]
+    responseNotContains?: string[]
+    maxLatencyMs?:        number
+  }
+}
+```
+
+### Key Properties
+
+- **Immutable** — Never edited after creation. If the tool changes so much the case no longer applies, archive it.
+- **Cheap to run** — Seed-stable assertions only (no `{{snapshot:*}}` tokens). Suitable for CI.
+- **Not scaled** — No formula. One case per real bug, created ad-hoc.
+- **Self-documenting** — `bugRef` links to the fix, so a failure immediately tells you what regressed.
+- **Separate file** — Stored in `<toolname>.regression.json`, separate from golden and labeled.
+
+---
+
 ## RubricEvalCase (Stub)
 
-Reserved for scored multi-dimensional evaluation. Not yet proven in production.
+Reserved for scored multi-dimensional evaluation. Use for synthesis quality testing where deterministic assertions are insufficient — e.g., "did the agent coherently combine data from 3 tools into a useful response?"
 
 ```
 RubricEvalCase {
   id:          string
   description: string
   input: { message: string }
+  referenceData?: Record<string, unknown>  // Ground truth tool output for the judge
   rubric: {
     dimension: string    // e.g., "accuracy", "completeness", "safety"
-    maxScore:  number
+    maxScore:  number    // Use 1 for binary (pass/fail), 3-5 for graded
     criteria:  string    // What each score level means
   }[]
 }
 ```
+
+### When to Use
+
+- Multi-tool synthesis: "Did the response accurately integrate data from all called tools?"
+- Response quality: "Is the response helpful and well-structured?" (not testable with substring matching)
+- Safety nuance: "Did the response appropriately hedge on investment advice?"
+
+### Implementation Notes
+
+- Binary scoring (`maxScore: 1`) is more defensible than graded rubrics
+- The `referenceData` field provides ground truth so the judge compares against real data, not its own knowledge
+- Keep rubric evals in a separate tier — run deterministic evals first, rubric evals only when deterministic pass
 
 ---
 
@@ -116,15 +166,48 @@ EvalCaseResult {
 
 ## EvalSuiteResult
 
-The result of running an entire eval suite (golden or labeled).
+The result of running an entire eval suite.
 
 ```
 EvalSuiteResult {
-  tier:            'golden' | 'labeled'
+  runId:           string    // UUID — unique identifier for this run
+  timestamp:       string    // ISO 8601
+  tier:            'golden' | 'labeled' | 'regression'
+  toolName:        string
+
+  // Current state at run time (for staleness comparison)
+  metadata: {
+    toolVersion:     string
+    descriptionHash: string    // sha256(description)[0:12]
+    registrySize:    number
+    evalFileHash:    string    // sha256(eval JSON file)[0:12]
+  }
+
+  stalenessWarnings: string[]  // Warnings from staleness checks
+
   cases:           EvalCaseResult[]
-  totalPassed:     number
-  totalFailed:     number
-  totalDurationMs: number
-  estimatedCost?:  number
+
+  summary: {
+    totalCases:         number
+    passed:             number
+    failed:             number
+    skippedAssertions:  number
+    totalDurationMs:    number
+    estimatedCostUsd?:  number
+  }
+
+  // Baseline diffing (optional — requires a previous runId)
+  baselineRunId?:  string    // Previous run to compare against
+  regressions:     string[]  // Case IDs that passed before, fail now
+  newPasses:       string[]  // Case IDs that failed before, pass now
 }
 ```
+
+### Baseline Diffing
+
+When `baselineRunId` is provided, the runner loads the previous `EvalSuiteResult` and compares:
+- **Regression:** Passed in baseline, fails now → add to `regressions[]`
+- **New pass:** Failed in baseline, passes now → add to `newPasses[]`
+- **Unchanged:** No note
+
+This is the minimum viable A/B comparison. It answers: "Did my change break anything that was working?"

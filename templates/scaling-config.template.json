@@ -1,0 +1,101 @@
+{
+  "scalingFormula": {
+    "description": "Case count formulas by difficulty tier. These are FLOORS, not fixed counts. The actual count may be higher if failure weights suggest a tier needs more coverage.",
+
+    "straightforward": {
+      "formula": "10 + T",
+      "variables": { "T": "total tools in registry" },
+      "minimum": 10,
+      "batchSize": 5
+    },
+
+    "ambiguous": {
+      "formula": "25 + (weightedOverlaps × 2) + (C × 1)",
+      "variables": {
+        "weightedOverlaps": "sum of overlap weights for this tool (see overlapWeights)",
+        "C": "clusters containing this tool"
+      },
+      "minimum": 25,
+      "batchSize": 5
+    },
+
+    "edge": {
+      "formula": "5 + floor(T / 3)",
+      "variables": { "T": "total tools in registry" },
+      "minimum": 5,
+      "batchSize": 5
+    },
+
+    "regression": {
+      "formula": "N/A — one case per real bug, created ad-hoc",
+      "minimum": 0,
+      "batchSize": 1
+    }
+  },
+
+  "overlapWeights": {
+    "description": "Not all overlaps are equally confusable. Weight by description similarity to allocate more ambiguous cases to genuinely confusable pairs.",
+
+    "method": "descriptionSimilarity",
+    "levels": {
+      "high": {
+        "weight": 2.0,
+        "criteria": "Descriptions share 3+ trigger words or the 'Use when' clauses could be swapped without obvious wrongness",
+        "example": "get_weather vs get_forecast — both triggered by weather questions, distinguished only by temporal scope"
+      },
+      "medium": {
+        "weight": 1.0,
+        "criteria": "Descriptions share domain vocabulary but have clearly distinct triggers",
+        "example": "get_weather vs get_air_quality — both about atmospheric conditions, but different data types"
+      },
+      "low": {
+        "weight": 0.5,
+        "criteria": "Tools are in the same domain but rarely confused in practice",
+        "example": "get_holdings vs calculate_tax — both financial, but triggers are unrelated"
+      }
+    },
+
+    "overlapMapExtension": {
+      "description": "Add a 'weight' field to each overlap entry in the overlap map",
+      "example": {
+        "tool": "get_weather",
+        "overlaps": [
+          { "tool": "get_forecast", "reason": "temporal scope confusion", "weight": "high" },
+          { "tool": "get_air_quality", "reason": "atmospheric data overlap", "weight": "medium" }
+        ]
+      },
+      "computation": "weightedOverlaps = sum of weight values for all overlaps of this tool. With the example above: 2.0 + 1.0 = 3.0, so ambiguous count = 25 + (3.0 × 2) + C"
+    }
+  },
+
+  "failureWeights": {
+    "description": "After running an eval suite, record the failure distribution by tier. Use this to skew the formula toward tiers that are actually failing. Stored as a post-run artifact, not pre-configured.",
+
+    "schema": {
+      "lastRunId": "{{uuid of the most recent eval run}}",
+      "failuresByTier": {
+        "straightforward": { "total": 16, "failed": 1, "rate": 0.0625 },
+        "ambiguous": { "total": 29, "failed": 8, "rate": 0.276 },
+        "edge": { "total": 7, "failed": 0, "rate": 0.0 },
+        "regression": { "total": 3, "failed": 0, "rate": 0.0 }
+      }
+    },
+
+    "adjustment": {
+      "description": "When the failure rate for a tier exceeds a threshold, multiply that tier's formula count by an adjustment factor",
+      "thresholds": {
+        "low": { "rate": 0.0, "factor": 1.0, "meaning": "No failures — formula count is sufficient" },
+        "medium": { "rate": 0.15, "factor": 1.25, "meaning": "Some failures — add 25% more cases to this tier" },
+        "high": { "rate": 0.30, "factor": 1.5, "meaning": "Many failures — add 50% more cases to this tier" }
+      },
+      "example": "If ambiguous tier has a 27.6% failure rate (medium threshold), the adjusted count = ceil(29 × 1.25) = 37 cases instead of 29"
+    }
+  },
+
+  "hubToolPruning": {
+    "description": "Tools that overlap with many others (hub tools) can generate an explosion of ambiguous cases. Cap the per-tool ambiguous count to prevent one hub tool from dominating the eval suite.",
+
+    "maxAmbiguousPerTool": 50,
+    "pruningStrategy": "When the formula produces more than maxAmbiguousPerTool, prioritize: (1) high-weight overlaps first, (2) at least one case per overlap pair, (3) cluster coverage. Drop lowest-weight overlap cases to reach the cap."
+  }
+}

@@ -1,0 +1,65 @@
+[
+  {
+    "id": "rg-{{toolname}}-001",
+    "description": "regression — {{describe the bug that was found and fixed}}",
+    "difficulty": "regression",
+    "createdAt": "{{ISO 8601 — when this regression case was created}}",
+    "bugRef": "{{issue number or commit hash where the bug was fixed}}",
+    "input": { "message": "{{the exact user message that triggered the bug}}" },
+    "expect": {
+      "toolsCalled": ["{{tool_name}}"],
+      "noToolErrors": true,
+      "responseNonEmpty": true,
+      "responseContains": ["{{exact value that proves the bug is fixed}}"],
+      "responseNotContains": ["{{the wrong value that appeared when the bug existed}}"],
+      "maxLatencyMs": 30000
+    }
+  }
+]
+
+// ============================================================================
+// Regression Eval Template
+//
+// Regression evals are a fourth difficulty tier alongside straightforward,
+// ambiguous, and edge. They capture specific bugs that were found and fixed,
+// ensuring they never recur.
+//
+// KEY DIFFERENCES FROM OTHER TIERS:
+//
+// 1. IMMUTABLE ONCE CREATED
+//    Regression cases are never modified. They document a specific failure at a
+//    specific point in time. If the tool's description or schema changes so much
+//    that the regression case no longer applies, archive it — don't update it.
+//
+// 2. CHEAP TO RUN
+//    Use seed-stable assertions only (no {{snapshot:*}} tokens). Regression
+//    cases should be runnable without live data capture, making them fast and
+//    suitable for CI.
+//
+// 3. GENERATED ONCE, NOT SCALED
+//    Unlike the other tiers which scale with the registry (10+T, 25+O×2+C×1,
+//    5+T/3), regression cases are created ad-hoc when bugs are found. There is
+//    no formula — you get one regression case per real bug.
+//
+// 4. BUG REFERENCE
+//    Each case includes a bugRef field linking to the issue or commit where the
+//    bug was fixed. This makes the eval self-documenting: if it fails, you know
+//    exactly which fix regressed.
+//
+// WHEN TO CREATE A REGRESSION CASE:
+//
+//   - A golden or labeled eval fails and reveals a real routing bug
+//   - A user reports a misrouted tool call
+//   - A description change accidentally breaks routing for a previously-working prompt
+//   - An edge case is discovered in production that wasn't covered by existing evals
+//
+// WHEN NOT TO:
+//
+//   - The failure is in the tool's execute() function, not in routing
+//   - The failure is transient (API timeout, network error)
+//   - The failure is already covered by an existing eval case
+//
+// FILE CONVENTION:
+//   evals/<toolname>.regression.json
+//   Separate from golden and labeled files so they can run independently in CI.
+// ============================================================================

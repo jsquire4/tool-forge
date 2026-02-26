@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "toolName": "{{tool_name}}",
+    "toolVersion": "{{version}}",
+    "descriptionHash": "{{sha256(description)[0:12]}}",
+    "description": "{{description — full routing contract, for human reference}}",
+    "registrySize": "{{T — total tools at generation time}}",
+    "generatedAt": "{{ISO 8601 timestamp}}",
+    "generatedBy": "forge-eval",
+    "tier": "golden | labeled",
+    "overlapMapVersion": "{{sha256(overlap-map)[0:12] — null for golden}}"
+  },
+  "cases": [
+    "// ... GoldenEvalCase[] or LabeledEvalCase[] ..."
+  ]
+}
+
+// ============================================================================
+// Eval File Envelope
+//
+// Every eval file (golden or labeled) is wrapped in this envelope. The metadata
+// block enables three capabilities that bare case arrays cannot:
+//
+// 1. STALENESS DETECTION
+//    At run time, the eval runner computes the current tool description hash
+//    and compares it to metadata.descriptionHash. If they differ, the runner
+//    emits a warning:
+//      "Golden evals for get_weather were generated against a different
+//       description (hash abc123 vs def456). Revalidate before treating
+//       failures as regressions."
+//    This makes description drift visible without requiring eval rewrites.
+//
+// 2. REGISTRY CONTEXT
+//    metadata.registrySize records how many tools existed when the evals were
+//    generated. If the registry has grown significantly (e.g., 6 → 25 tools),
+//    the runner can flag that labeled evals may be under-specified — new tools
+//    may have created overlaps that existing toolsAcceptable sets don't cover.
+//
+// 3. TRACEABILITY
+//    metadata.toolVersion + metadata.generatedAt create an audit trail. When a
+//    regression appears, you can trace exactly which tool version and registry
+//    state the passing evals were generated against.
+//
+// HASH COMPUTATION
+//    descriptionHash = first 12 chars of SHA-256 of the description string.
+//    overlapMapVersion = first 12 chars of SHA-256 of the overlap map JSON.
+//    Both are deterministic and cheap to compute in any language.
+//
+// MIGRATION
+//    Existing bare-array eval files (without the envelope) should still be
+//    accepted by the runner. Treat missing metadata as: "staleness detection
+//    unavailable, proceed without warnings."
+// ============================================================================

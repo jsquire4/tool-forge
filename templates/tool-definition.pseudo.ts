@@ -73,12 +73,29 @@ interface ToolDefinition {
   timeout: number;
   // Milliseconds. Default: 15000. Increase for slow external APIs.
 
+  // ── Lifecycle ──
+  version: string;
+  // REQUIRED. Semantic version (e.g., "1.0.0"). Increment on any change to
+  // description, schema, or behavior. Eval metadata records this version so
+  // stale evals are detectable. Bump rules:
+  //   - Description wording change → minor (1.0.0 → 1.1.0)
+  //   - Schema field added/removed → major (1.0.0 → 2.0.0)
+  //   - Bug fix in execute()    → patch (1.0.0 → 1.0.1)
+
+  status: 'active' | 'deprecated' | 'removed';
+  // active     — available in the tool registry and system prompt
+  // deprecated — still in registry (existing evals can run) but hidden from
+  //              the AVAILABLE TOOLS list in the system prompt. No new routing.
+  // removed    — excluded from everything. Kept in source for history.
+  //
+  // Lifecycle: active → deprecated → removed
+  // The system prompt builder should filter: only status === 'active' tools
+  // appear in AVAILABLE TOOLS. The eval runner should warn when running evals
+  // against deprecated or removed tools.
+
   // ── Optional metadata ──
   tags?: string[];
   // Domain tags for filtering/grouping: ['portfolio', 'risk', 'compliance']
-
-  version?: string;
-  // Semantic version if you version tools independently
 
   dependsOn?: string[];
   // Names of other tools this tool calls internally

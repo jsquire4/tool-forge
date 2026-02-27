@@ -14,7 +14,13 @@ This skill is the entry point for adding a tool to your LLM agent. It conducts a
 
 ---
 
-## Phase 0: Initialize Forge Service
+## Phase 0: Start Forge Dialogue
+
+> **TUI is now the primary path.** The forge service is maintained for users who prefer Claude Code orchestration, but is no longer required. To forge a tool directly in the TUI, open the terminal, run `node cli/index.js`, and select "Forge Tool" from the main menu. The TUI runs the full 10-phase dialogue with live spec preview, file generation, and eval creation — all in one place.
+
+### Legacy: forge-service path (still supported)
+
+If you prefer the two-terminal workflow with Claude Code as the orchestrator:
 
 1. **Check for active service:**
    Run: `node cli/forge-service-client.js health`
@@ -58,21 +64,6 @@ This skill is the entry point for adding a tool to your LLM agent. It conducts a
    Run: `node cli/forge-service-client.js shutdown`
 
 > **Note:** If `forge-pending-tool.json` exists in the project root when the loop begins, read it as the first queued item and proceed as if it arrived via queue. Delete the file after `complete`.
-
-**If no pending spec and queue is empty on first start:**
-- Discover existing tools (glob for `*.tool.*`, `*_tool.*`) and present:
-
-```
-Existing tools in the registry:
-  - tool_name — description (if readable)
-  - ...
-
-Watching forge queue... (open TUI in another terminal to add endpoints)
-
-Do you want to:
-  A) Add a new tool manually now
-  B) Wait for TUI queue items
-```
 
 ---
 

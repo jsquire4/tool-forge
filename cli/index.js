@@ -37,6 +37,29 @@ function loadConfig() {
   }
 }
 
+/**
+ * Returns true if the user needs to go through onboarding:
+ * - No API key in .env AND no API key in environment variables
+ */
+function needsOnboarding(config) {
+  const projectRoot = findProjectRoot();
+  const envPath = resolve(projectRoot, '.env');
+
+  // Check process env first
+  if (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) return false;
+
+  // Check .env file
+  if (existsSync(envPath)) {
+    try {
+      const envText = readFileSync(envPath, 'utf-8');
+      if (/ANTHROPIC_API_KEY\s*=\s*\S/.test(envText)) return false;
+      if (/OPENAI_API_KEY\s*=\s*\S/.test(envText)) return false;
+    } catch (_) { /* ignore */ }
+  }
+
+  return true; // No key found anywhere
+}
+
 async function main() {
   process.chdir(findProjectRoot());
 
@@ -65,6 +88,12 @@ async function main() {
   }
 
   const config = loadConfig();
+
+  // Check if onboarding is needed, and if so, pass the flag to the TUI
+  if (needsOnboarding(config)) {
+    config._startOnOnboarding = true;
+  }
+
   await runTui(config);
 }
 

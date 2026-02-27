@@ -124,11 +124,14 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
   list.on('select', (item, index) => {
     switch (index) {
-      case 0: showModelSelector(screen, config, openPopup, closePopup); break;
-      case 1: showPromptEditor(screen, config, 'agent', openPopup, closePopup); break;
-      case 2: showPromptEditor(screen, config, 'skill', openPopup, closePopup); break;
-      case 3: showApiSourceEditor(screen, config, openPopup, closePopup); break;
-      case 4: showEnvManager(screen, config, openPopup, closePopup); break;
+      case 0: showModelSelector(screen, config, openPopup, closePopup, 'generation'); break;
+      case 1: showModelSelector(screen, config, openPopup, closePopup, 'eval'); break;
+      case 2: showModelSelector(screen, config, openPopup, closePopup, 'verifier'); break;
+      case 3: showModelSelector(screen, config, openPopup, closePopup, 'secondary'); break;
+      case 4: showPromptEditor(screen, config, 'agent', openPopup, closePopup); break;
+      case 5: showPromptEditor(screen, config, 'skill', openPopup, closePopup); break;
+      case 6: showApiSourceEditor(screen, config, openPopup, closePopup); break;
+      case 7: showEnvManager(screen, config, openPopup, closePopup); break;
     }
   });
 
@@ -145,9 +148,19 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       ? '{green-fg}skills/forge-tool/SKILL.md{/green-fg}'
       : '{red-fg}not found{/red-fg}';
 
-    const modelDisplay = cfg.model
-      ? `{cyan-fg}${cfg.model}{/cyan-fg}`
-      : '{yellow-fg}not set{/yellow-fg}';
+    const models = cfg.models || {};
+    const generationModelDisplay = (models.generation || cfg.model)
+      ? `{cyan-fg}${models.generation || cfg.model}{/cyan-fg}`
+      : '{yellow-fg}not set (default: claude-sonnet-4-6){/yellow-fg}';
+    const evalModelDisplay = models.eval
+      ? `{cyan-fg}${models.eval}{/cyan-fg}`
+      : '{#888888-fg}default (claude-sonnet-4-6){/#888888-fg}';
+    const verifierModelDisplay = models.verifier
+      ? `{cyan-fg}${models.verifier}{/cyan-fg}`
+      : '{#888888-fg}default (claude-sonnet-4-6){/#888888-fg}';
+    const secondaryModelDisplay = models.secondary
+      ? `{cyan-fg}${models.secondary}{/cyan-fg}`
+      : '{#888888-fg}not set (model comparison disabled){/#888888-fg}';
 
     // Detect which API providers have keys
     const providers = [];
@@ -168,11 +181,14 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       `  {bold}${num}.{/bold} {white-fg}${label.padEnd(22)}{/white-fg}${val}`;
 
     list.setItems([
-      row('1', 'Model', modelDisplay),
-      row('2', 'Agent System Prompt', systemPromptStatus),
-      row('3', 'Forge Skill Prompt', skillStatus),
-      row('4', 'API Source', apiSourceStatus),
-      row('5', 'API Keys / Secrets', keysSummary)
+      row('1', 'Generation Model', generationModelDisplay),
+      row('2', 'Eval Model',       evalModelDisplay),
+      row('3', 'Verifier Model',   verifierModelDisplay),
+      row('4', 'Secondary Model',  secondaryModelDisplay),
+      row('5', 'Agent System Prompt', systemPromptStatus),
+      row('6', 'Forge Skill Prompt',  skillStatus),
+      row('7', 'API Source',          apiSourceStatus),
+      row('8', 'API Keys / Secrets',  keysSummary)
     ]);
     screen.render();
   };
@@ -182,9 +198,9 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return list;
 }
 
-function showModelSelector(screen, config, openPopup, closePopup) {
+function showModelSelector(screen, config, openPopup, closePopup, role = 'generation') {
   const cfg = loadConfig();
-  const current = cfg.model || 'claude-sonnet-4-6';
+  const current = (cfg.models?.[role] || (role === 'generation' ? cfg.model : null)) || '';
   const envMap = loadEnv();
   const { items, values } = buildModelList(envMap);
 
@@ -200,6 +216,8 @@ function showModelSelector(screen, config, openPopup, closePopup) {
   const noteHeight = 2;
   const listHeight = Math.min(items.length + noteHeight + 4, 24);
 
+  const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+
   const popup = blessed.box({
     parent: screen,
     border: 'line',
@@ -207,7 +225,7 @@ function showModelSelector(screen, config, openPopup, closePopup) {
     width: 54,
     top: 'center',
     left: 'center',
-    label: ' Select Model ',
+    label: ` Select ${roleLabel} Model `,
     tags: true,
     style: { border: { fg: 'blue' } }
   });
@@ -220,7 +238,7 @@ function showModelSelector(screen, config, openPopup, closePopup) {
     width: '100%-2',
     height: 1,
     tags: true,
-    content: '{#888888-fg}Controls which model forge-tool uses (Claude models recommended){/#888888-fg}'
+    content: `{#888888-fg}Controls which model is used for ${role} tasks{/#888888-fg}`
   });
 
   const list = blessed.list({
@@ -255,17 +273,24 @@ function showModelSelector(screen, config, openPopup, closePopup) {
       });
       prompt.input('Enter model ID (e.g. gpt-4o, gemini-2.0-flash):', current, (err, val) => {
         if (!err && val && val.trim()) {
-          cfg.model = val.trim();
+          cfg.models = cfg.models || {};
+          cfg.models[role] = val.trim();
           saveConfig(cfg);
-          config.model = cfg.model;
+          if (!config.models) config.models = {};
+          config.models[role] = val.trim();
+          if (role === 'generation') config.model = val.trim();
         }
         screen.render();
       });
       return;
     }
-    cfg.model = val;
+    cfg.models = cfg.models || {};
+    cfg.models[role] = val;
     saveConfig(cfg);
-    config.model = val;
+    if (!config.models) config.models = {};
+    config.models[role] = val;
+    // Backwards compat: also update config.model for generation role
+    if (role === 'generation') config.model = val;
     popup.destroy();
     screen.render();
   }

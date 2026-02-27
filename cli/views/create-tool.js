@@ -1,5 +1,7 @@
 /**
  * Create Tool View — Shows uncovered endpoints; queues them via forge service or writes pending spec.
+ * @deprecated in v0.3.0 — replaced by cli/views/forge.js (standalone TUI generator).
+ * This file is no longer linked from the main menu but is kept for reference.
  */
 
 import blessed from 'blessed';

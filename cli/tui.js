@@ -17,30 +17,10 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const LOCK_FILE = resolve(PROJECT_ROOT, '.forge-service.lock');
-const HEADER_POLL_MS = 3000;
 
 function readLock() {
   if (!existsSync(LOCK_FILE)) return null;
   try { return JSON.parse(readFileSync(LOCK_FILE, 'utf-8')); } catch (_) { return null; }
-}
-
-async function fetchHealth(port) {
-  try {
-    const { request } = await import('http');
-    return new Promise((res) => {
-      const req = request(
-        { hostname: '127.0.0.1', port, path: '/health', method: 'GET' },
-        (resp) => {
-          let data = '';
-          resp.on('data', (d) => { data += d; });
-          resp.on('end', () => { try { res(JSON.parse(data)); } catch (_) { res(null); } });
-        }
-      );
-      req.setTimeout(2000, () => { req.destroy(); res(null); });
-      req.on('error', () => res(null));
-      req.end();
-    });
-  } catch (_) { return null; }
 }
 
 export async function runTui(config) {
@@ -111,8 +91,6 @@ export async function runTui(config) {
   async function startService() {
     const lock = readLock();
     if (lock) {
-      const health = await fetchHealth(lock.port);
-      if (health) return; // Already alive
       // Stale lock — remove before spawning
       try { unlinkSync(LOCK_FILE); } catch (_) { /* ignore */ }
     }
@@ -180,50 +158,22 @@ export async function runTui(config) {
   const version = pkg.version || '0.2.0';
 
   async function updateHeader() {
-    const lock = readLock();
-    let servicePart;
-    if (lock) {
-      const health = await fetchHealth(lock.port);
-      if (health) {
-        const qColor = health.queueLength > 0 ? 'yellow' : 'white';
-        const workingBadge = health.working ? '  {yellow-fg}⟳ working{/yellow-fg}' : '';
-        const waitingBadge = health.waiting > 0 ? `  {#888888-fg}${health.waiting} watching{/#888888-fg}` : '';
-        servicePart =
-          `{green-fg}◉{/green-fg} {bold}ACTIVE{/bold}` +
-          `  queue:{${qColor}-fg}${health.queueLength}{/${qColor}-fg}` +
-          workingBadge + waitingBadge;
-      } else {
-        servicePart = '{yellow-fg}◈ LOCK (no response){/yellow-fg}';
-      }
-    } else {
-      servicePart = '{#888888-fg}○ no service{/#888888-fg}';
-    }
-    header.setContent(` {bold}{white-fg}▸▸ TOOL FORGE{/white-fg}{/bold}   ${servicePart}{|}  {blue-fg}v${version}{/blue-fg} `);
+    const modelName = config?.models?.generation || config?.model || 'claude-sonnet-4-6';
+    header.setContent(
+      ` {bold}{white-fg}▸▸ TOOL FORGE{/white-fg}{/bold}` +
+      `  {#888888-fg}build · test · verify{/#888888-fg}` +
+      `{|}  {cyan-fg}${modelName}{/cyan-fg}  {blue-fg}v${version}{/blue-fg} `
+    );
     screen.render();
   }
 
   updateHeader();
-  const headerTimer = setInterval(updateHeader, HEADER_POLL_MS);
+  const headerTimer = setInterval(updateHeader, 30_000); // refresh every 30s for model changes
   headerTimer.unref?.();
 
   // ── Global key bindings (persist for the entire session) ──────────────────
   screen.key(['q', 'C-c'], () => {
-    const lock = readLock();
-    if (lock) {
-      openPopup();
-      const confirm = blessed.question({
-        parent: screen, border: 'line', height: 'shrink', width: 'half',
-        top: 'center', left: 'center', label: ' {red-fg}Quit{/red-fg} ', tags: true, keys: true
-      });
-      confirm.ask('Forge service is active. Also stop the service? (y/n)', (err, answer) => {
-        closePopup();
-        confirm.destroy();
-        const stopService = !err && /^y/i.test(answer);
-        cleanup(stopService);
-      });
-    } else {
-      cleanup(false);
-    }
+    cleanup(false);
   });
 
   screen.key(['b', 'escape'], () => {
@@ -237,21 +187,8 @@ export async function runTui(config) {
     screen.render();
   });
 
-  function cleanup(stopService = false) {
+  function cleanup() {
     clearInterval(headerTimer);
-    if (stopService) {
-      const lock = readLock();
-      if (lock) {
-        // Fire-and-forget shutdown request — don't wait, just exit after a short delay
-        import('http').then(({ request }) => {
-          try {
-            const req = request({ hostname: '127.0.0.1', port: lock.port, path: '/shutdown', method: 'DELETE' });
-            req.on('error', () => {});
-            req.end();
-          } catch (_) {}
-        }).catch(() => {});
-      }
-    }
     try { screen.destroy(); } catch (_) {}
     process.exit(0);
   }
@@ -261,6 +198,6 @@ export async function runTui(config) {
     screen.render();
   });
 
-  await showView('main-menu');
+  await showView(config._startOnOnboarding ? 'onboarding' : 'main-menu');
   screen.render();
 }

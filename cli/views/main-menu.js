@@ -22,7 +22,7 @@ import { inferOutputGroups, getVerifiersForGroups } from '../output-groups.js';
 
 const MENU_ITEMS = [
   { key: 'tools-evals',        label: 'Tools & Evals',       icon: '⚙' },
-  { key: 'create-tool',        label: 'Create Tool / MCP',   icon: '＋' },
+  { key: 'forge',              label: 'Forge Tool',          icon: '⚒' },
   { key: 'endpoints',          label: 'Endpoints',           icon: '⇄' },
   { key: 'verifier-coverage',  label: 'Verifier Coverage',   icon: '✔' },
   { key: 'performance',        label: 'Performance',         icon: '▲' },
@@ -69,6 +69,17 @@ async function buildStats(config) {
     }
   } catch (_) { /* sqlite not available */ }
 
+  let generationStats = { complete: 0, inProgress: 0 };
+  try {
+    const dbPath = resolve(process.cwd(), config?.dbPath || 'forge.db');
+    if (existsSync(dbPath)) {
+      const { getDb, getToolGenerations } = await import('../db.js');
+      const generations = getToolGenerations(getDb(dbPath));
+      generationStats.complete = generations.filter((g) => g.status === 'complete').length;
+      generationStats.inProgress = generations.filter((g) => g.status === 'in_progress').length;
+    }
+  } catch (_) { /* sqlite not available */ }
+
   const model = config?.model || 'not set';
 
   let chatProvider = 'no key';
@@ -82,7 +93,7 @@ async function buildStats(config) {
   } catch (_) { /* skip */ }
 
   const serviceRunning = readLock() !== null;
-  return { toolsCount: tools.length, uncovered, endpointsTotal: endpoints.length, allCovered, hasEvalHistory, model, chatProvider, serviceRunning };
+  return { toolsCount: tools.length, uncovered, endpointsTotal: endpoints.length, allCovered, hasEvalHistory, model, chatProvider, serviceRunning, generationStats };
 }
 
 function colorStat(text, level) {
@@ -95,9 +106,10 @@ function colorStat(text, level) {
 
 function buildItems(stats) {
   const toolsStat    = colorStat(`${stats.toolsCount} tool${stats.toolsCount !== 1 ? 's' : ''}`, stats.toolsCount > 0 ? 'good' : 'dim');
-  const createStat   = stats.uncovered > 0
-    ? colorStat(`${stats.uncovered} uncovered`, 'warn')
-    : colorStat('all covered', 'good');
+  const forgeStat    = stats.generationStats.complete > 0 || stats.generationStats.inProgress > 0
+    ? colorStat(`${stats.generationStats.complete} complete`, 'good') +
+      (stats.generationStats.inProgress > 0 ? '  ' + colorStat(`${stats.generationStats.inProgress} in progress`, 'warn') : '')
+    : colorStat('no sessions yet', 'dim');
   const epStat       = colorStat(`${stats.endpointsTotal} total`, 'neutral') +
     (stats.uncovered > 0 ? ', ' + colorStat(`${stats.uncovered} uncovered`, 'warn') : '');
   const verifStat    = stats.allCovered ? colorStat('✓ all covered', 'good') : colorStat('⚠ gaps detected', 'warn');
@@ -113,7 +125,7 @@ function buildItems(stats) {
 
   return [
     row('1', MENU_ITEMS[0].icon, MENU_ITEMS[0].label, toolsStat),
-    row('2', MENU_ITEMS[1].icon, MENU_ITEMS[1].label, createStat),
+    row('2', MENU_ITEMS[1].icon, MENU_ITEMS[1].label, forgeStat),
     row('3', MENU_ITEMS[2].icon, MENU_ITEMS[2].label, epStat),
     row('4', MENU_ITEMS[3].icon, MENU_ITEMS[3].label, verifStat),
     row('5', MENU_ITEMS[4].icon, MENU_ITEMS[4].label, perfStat),
@@ -129,17 +141,6 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     width: '100%',
     height: '100%',
     tags: true
-  });
-
-  // ── Service notice (shown when forge service is not running) ──────────────
-  const serviceNotice = blessed.box({
-    parent: container,
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 1,
-    tags: true,
-    hidden: true
   });
 
   // ── Title banner ──────────────────────────────────────────────────────────
@@ -199,47 +200,15 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (MENU_ITEMS[idx]) navigate(MENU_ITEMS[idx].key);
   });
 
-  // Register 's' to start the forge service from the main menu
-  screenKey('s', async () => {
-    serviceNotice.setContent(
-      ' {yellow-fg}⟳ Starting forge service…{/yellow-fg}'
-    );
-    serviceNotice.show();
-    screen.render();
-    try {
-      await startService?.();
-      serviceNotice.setContent(
-        ' {green-fg}◉ Forge service started — queue is ready{/green-fg}'
-      );
-    } catch (err) {
-      serviceNotice.setContent(` {red-fg}⚠ Failed to start service: ${err.message}{/red-fg}`);
-    }
-    screen.render();
-    setTimeout(() => { container.refresh(); }, 500);
-  });
-
   container.refresh = async () => {
     try {
       const stats = await buildStats(config);
       list.setItems(buildItems(stats));
 
-      if (stats.serviceRunning) {
-        serviceNotice.hide();
-        setFooter(
-          ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
-          '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
-        );
-      } else {
-        serviceNotice.setContent(
-          ' {#888888-fg}○ Forge service not running — press {cyan-fg}s{/cyan-fg} to start it' +
-          ' (required to queue endpoints to Claude){/#888888-fg}'
-        );
-        serviceNotice.show();
-        setFooter(
-          ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
-          '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}s{/cyan-fg} start service  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
-        );
-      }
+      setFooter(
+        ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
+        '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
+      );
     } catch (_) {
       list.setItems(MENU_ITEMS.map((m, i) => ` ${i + 1}  ${m.icon}  ${m.label}`));
     }

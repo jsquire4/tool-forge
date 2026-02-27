@@ -14,35 +14,65 @@ This skill is the entry point for adding a tool to your LLM agent. It conducts a
 
 ---
 
-## Phase 0: Read Current State
+## Phase 0: Initialize Forge Service
 
-Before any dialogue, discover what tools already exist and check for a pending spec.
+1. **Check for active service:**
+   Run: `node cli/forge-service-client.js health`
+   - If succeeds: "Forge service already active. Queue is open."
+   - If fails: start service:
+     Run: `node cli/forge-service-client.js start`
+     Wait for success output (port number).
+     Confirm: "Forge service started. Open the TUI in another terminal: `node cli/index.js`"
 
-1. **Check for `forge-pending-tool.json`** in the project root. If it exists, read it. See `references/pending-spec.md`.
-2. Look for existing tool files in the project (glob for `*.tool.*`, `*_tool.*`, or similar patterns)
-3. For each file, extract the registered tool name
-4. If a `forge.config.json` exists in the project root, read it for stack-specific settings
+2. **Enter watch loop:**
+   ```
+   loop:
+     Run: node cli/forge-service-client.js next
+     - Exit 1 (timeout/empty): continue loop
+       (show "Watching forge queue..." every 3rd timeout)
+     - Exit 0 (item arrived): display item and prompt:
 
-**If `forge-pending-tool.json` exists:**
-- Present: "I found a pending spec from the API TUI: `{{endpoint.method}} {{endpoint.path}}` → `{{endpoint.name}}`. Create this tool?"
-- If user confirms: **skip Phase 1**. Use the endpoint as the starting spec. Proceed to Phase 2 (skeptic gate, optionally shortened), then Phase 3.
-- If user declines: delete or rename the file, then proceed with normal flow below.
+       ─────────────────────────────────────────────
+       Forge queue item ready:
+         {endpoint.method} {endpoint.path} → {endpoint.name}
+       ─────────────────────────────────────────────
+       What would you like to forge?
+         t) Tool + tests (full 10-phase dialogue)
+         v) Verifier for this tool
+         e) Evals only (tool already exists)
+         s) Skip — remove from queue
+       > _
 
-**If no pending spec:**
-- Present the list to the user:
+     Based on choice:
+       t → run Phases 1-10 (with this endpoint pre-loaded as the spec)
+       v → invoke /forge-verifier flow
+       e → invoke /forge-eval flow
+       s → do nothing (just complete)
+
+     After choice completes:
+     Run: node cli/forge-service-client.js complete
+     Loop.
+   ```
+
+3. **On session end (any exit path):**
+   Run: `node cli/forge-service-client.js shutdown`
+
+> **Note:** If `forge-pending-tool.json` exists in the project root when the loop begins, read it as the first queued item and proceed as if it arrived via queue. Delete the file after `complete`.
+
+**If no pending spec and queue is empty on first start:**
+- Discover existing tools (glob for `*.tool.*`, `*_tool.*`) and present:
 
 ```
 Existing tools in the registry:
   - tool_name — description (if readable)
   - ...
 
-Do you want to:
-  A) Add a new tool
-  B) Build out an existing tool stub
-```
+Watching forge queue... (open TUI in another terminal to add endpoints)
 
-If user chooses B: treat it as starting fresh for the named tool.
-If user chooses A: proceed to Phase 1.
+Do you want to:
+  A) Add a new tool manually now
+  B) Wait for TUI queue items
+```
 
 ---
 

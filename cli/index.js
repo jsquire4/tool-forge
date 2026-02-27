@@ -1,29 +1,24 @@
 #!/usr/bin/env node
 /**
- * Forge CLI — API discovery, verifier gap report.
+ * Forge CLI — Entry point.
  *
  * Usage:
- *   node index.js           # API TUI — discover APIs, create pending tool spec
- *   node index.js --manual  # Skip to manual endpoint entry
- *   node index.js --verifiers  # Verifier coverage gap report
+ *   node cli/index.js           # Full-screen TUI
+ *   node cli/index.js --manual  # Skip to manual endpoint entry (fallback)
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { runTui } from './tui.js';
 import { addEndpointManually } from './manual-entry.js';
-import { writeFileSync } from 'fs';
 import * as readline from 'readline';
-import { runVerifierReport } from './verifier-report.js';
 
 const CONFIG_FILE = 'forge.config.json';
 const PENDING_SPEC_FILE = 'forge-pending-tool.json';
 
 function findProjectRoot() {
-  const scriptDir = dirname(fileURLToPath(import.meta.url));
-  const cliParent = resolve(scriptDir, '..');
-  return cliParent;
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..');
 }
 
 function loadConfig() {
@@ -41,13 +36,6 @@ async function main() {
 
   const args = process.argv.slice(2);
   const manualOnly = args.includes('--manual') || args.includes('-m');
-  const verifiersOnly = args.includes('--verifiers') || args.includes('-v');
-
-  if (verifiersOnly) {
-    const config = loadConfig();
-    runVerifierReport(config);
-    return;
-  }
 
   if (manualOnly) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

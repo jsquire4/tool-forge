@@ -9,7 +9,7 @@ Tool-Forge is a collection of Claude Code skills and templates for building LLM 
 - **Pseudo-code vs real code.** Some templates are pseudo-code (conceptual, adapt to your stack); others are real code (MCP templates, weather example). See `docs/REAL-VS-PSEUDO.md`. Pseudo-code uses `// EXTENSION POINT` comments.
 - **Skills reference files, not inline.** SKILL.md files stay under ~400 lines. Detailed specs live in `references/`. Progressive disclosure.
 - **`{{placeholder}}` syntax.** Templates use `{{name}}`, `{{description}}`, etc. for values the skill fills in during dialogue. `// EXTENSION POINT` marks where the user's stack-specific code goes.
-- **No runnable code in the repo.** This is a skill + template library, not an npm package or CLI tool. There is no `package.json`, no `tsconfig.json`, no build step.
+- **The CLI (`cli/`) is real runnable Node.js code.** Templates and skills are reference material. The `example/` directory has a working tool+verifier setup wired to the CLI. Run `node cli/index.js` or `npm start` from the repo root.
 
 ## File Organization
 
@@ -18,6 +18,8 @@ skills/          — Claude Code skill definitions (SKILL.md + references/)
 templates/       — Annotated pseudo-code templates with extension points
 docs/            — Architecture guide, blog post, worked examples
 config/          — Optional configuration templates
+example/         — Real tool + verifier files wired to the CLI demo
+cli/             — Real runnable Node.js CLI (tool gap detector, verifier TUI)
 ```
 
 ## Editing Rules

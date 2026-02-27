@@ -1,5 +1,14 @@
 # Transient TUI output — deleted after forge-tool consumes it
 forge-pending-tool.json
 
+# Forge service runtime files
+.forge-service.lock
+
+# Secrets
+.env
+
+# Eval database
+forge.db
+
 # Project-specific tracking
 .claude/

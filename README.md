@@ -20,13 +20,24 @@ Plus: pseudo-code templates, a worked example (weather API), and an architecture
 
 ## Quick Start
 
-### 1. Clone
+### Try the CLI (no setup needed)
 
 ```bash
 git clone https://github.com/your-username/tool-forge.git
+cd tool-forge
+
+# See which API endpoints don't have tools yet (reads config/api-endpoints.template.json)
+node cli/index.js
+# or: npm start
+
+# See verifier coverage gaps for the example tools
+node cli/index.js --verifiers
+# or: npm run verifiers
 ```
 
-### 2. Install Skills
+Both commands use the `example/` directory — real `.tool.js` and `.verifier.js` files wired to the CLI. No stack setup required.
+
+### Install Skills
 
 Copy the skills you want into your Claude Code skills directory:
 
@@ -40,7 +51,7 @@ cp -r tool-forge/skills/forge-mcp  ~/.claude/skills/
 cp -r tool-forge/skills/forge-tool .claude/skills/
 ```
 
-### 3. Use
+### Use Skills
 
 In any Claude Code session:
 

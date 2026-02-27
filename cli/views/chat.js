@@ -1,0 +1,381 @@
+/**
+ * Chat View — Interactive chat to test model connection and tool routing.
+ *
+ * - Loads API key (Anthropic or OpenAI) from .env
+ * - Loads tool definitions from toolsDir so the model sees the actual tools
+ * - Loads system prompt from config.systemPromptPath if set
+ * - Handles multi-turn tool calling: shows what was called, sends stub results back,
+ *   then continues so you can see the model's final response
+ * - Tab: toggle focus between input and log (for scrolling history)
+ */
+
+import blessed from 'blessed';
+import { existsSync, readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { request as httpsRequest } from 'https';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, '../..');
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function loadEnv() {
+  const envPath = resolve(PROJECT_ROOT, '.env');
+  if (!existsSync(envPath)) return {};
+  const out = {};
+  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq === -1) continue;
+    out[t.slice(0, eq).trim()] = t.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+  }
+  return out;
+}
+
+function httpsPost(hostname, path, headers, body, timeoutMs = 60_000) {
+  return new Promise((res, rej) => {
+    const payload = JSON.stringify(body);
+    const req = httpsRequest(
+      { hostname, path, method: 'POST', headers: { ...headers, 'Content-Length': Buffer.byteLength(payload) } },
+      (resp) => {
+        let data = '';
+        resp.on('data', (d) => { data += d; });
+        resp.on('end', () => res({ status: resp.statusCode, body: data }));
+      }
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('API timeout')));
+    req.on('error', rej);
+    req.write(payload);
+    req.end();
+  });
+}
+
+function toAnthropicTool(t) {
+  return { name: t.name, description: t.description || '', input_schema: t.jsonSchema || { type: 'object', properties: {} } };
+}
+
+function toOpenAiTool(t) {
+  return { type: 'function', function: { name: t.name, description: t.description || '', parameters: t.jsonSchema || { type: 'object', properties: {} } } };
+}
+
+// ── Multi-turn API (returns { text, toolCalls: [{name, input}] }) ───────────
+
+const MAX_TOOL_DEPTH = 3;
+
+async function anthropicTurn(key, model, system, messages, tools) {
+  const body = {
+    model,
+    max_tokens: 1024,
+    ...(system ? { system } : {}),
+    messages,
+    ...(tools.length ? { tools: tools.map(toAnthropicTool) } : {})
+  };
+  const raw = await httpsPost('api.anthropic.com', '/v1/messages', {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'x-api-key': key
+  }, body);
+  const data = JSON.parse(raw.body);
+  if (data.error) throw new Error(data.error.message);
+  const toolUseBlocks = (data.content || []).filter((b) => b.type === 'tool_use');
+  const textBlocks    = (data.content || []).filter((b) => b.type === 'text');
+  return {
+    rawContent: data.content || [],
+    text: textBlocks.map((b) => b.text).join('\n'),
+    toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
+    stopReason: data.stop_reason
+  };
+}
+
+async function openaiTurn(key, model, system, messages, tools) {
+  const msgs = system ? [{ role: 'system', content: system }, ...messages] : [...messages];
+  const body = {
+    model,
+    messages: msgs,
+    ...(tools.length ? { tools: tools.map(toOpenAiTool), tool_choice: 'auto' } : {})
+  };
+  const raw = await httpsPost('api.openai.com', '/v1/chat/completions', {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${key}`
+  }, body);
+  const data = JSON.parse(raw.body);
+  if (data.error) throw new Error(data.error.message);
+  const msg = data.choices?.[0]?.message || {};
+  const toolCalls = (msg.tool_calls || []).map((tc) => ({
+    id: tc.id,
+    name: tc.function?.name,
+    input: (() => { try { return JSON.parse(tc.function?.arguments || '{}'); } catch (_) { return {}; } })()
+  }));
+  return { rawMessage: msg, text: msg.content || '', toolCalls, stopReason: msg.finish_reason };
+}
+
+// ── View ───────────────────────────────────────────────────────────────────
+
+export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+  const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
+
+  // ── Info bar ──────────────────────────────────────────────────────────────
+  const infoBar = blessed.box({
+    parent: container,
+    top: 0, left: 0, width: '100%', height: 1, tags: true,
+    style: { bg: 'default' }
+  });
+
+  // ── Message log ───────────────────────────────────────────────────────────
+  const log = blessed.log({
+    parent: container,
+    top: 1, left: 0, width: '100%', height: '100%-5',
+    tags: true, scrollable: true, alwaysScroll: true,
+    keys: true, vi: false, mouse: true,
+    border: { type: 'line' },
+    style: { border: { fg: '#333333' }, focus: { border: { fg: 'cyan' } } },
+    scrollbar: { ch: '│', style: { fg: '#555555' } }
+  });
+
+  // ── Status bar (shows "Thinking..." etc.) ────────────────────────────────
+  const statusBar = blessed.box({
+    parent: container,
+    bottom: 3, left: 0, width: '100%', height: 1,
+    tags: true, style: { fg: '#888888' }
+  });
+
+  // ── Input box ─────────────────────────────────────────────────────────────
+  const inputBox = blessed.textbox({
+    parent: container,
+    bottom: 0, left: 0, width: '100%', height: 3,
+    inputOnFocus: true,
+    border: { type: 'line' },
+    style: {
+      border: { fg: '#333333' },
+      focus: { border: { fg: 'cyan' } }
+    },
+    label: ' Message (Enter to send, Tab to scroll log) '
+  });
+
+  setFooter(
+    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Tab{/cyan-fg} toggle scroll  ' +
+    '{cyan-fg}c{/cyan-fg} clear  {cyan-fg}r{/cyan-fg} reset  {cyan-fg}b{/cyan-fg} back'
+  );
+
+  // ── Conversation state ────────────────────────────────────────────────────
+  let apiMessages = [];      // provider-format message history
+  let busy = false;
+  let provider = null;
+  let apiKey = null;
+  let model = null;
+  let systemPrompt = '';
+  let tools = [];
+  let initialized = false;
+
+  // ── Init: load config, key, tools ─────────────────────────────────────────
+  async function init() {
+    const env = loadEnv();
+    if (env.ANTHROPIC_API_KEY) {
+      provider = 'anthropic';
+      apiKey = env.ANTHROPIC_API_KEY;
+      model = config?.model?.startsWith('claude') ? config.model : 'claude-sonnet-4-6';
+    } else if (env.OPENAI_API_KEY) {
+      provider = 'openai';
+      apiKey = env.OPENAI_API_KEY;
+      model = config?.model && !config.model.startsWith('claude') ? config.model : 'gpt-4o-mini';
+    } else {
+      infoBar.setContent(
+        ' {red-fg}⚠ No API key{/red-fg}  Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Settings → API Keys'
+      );
+      screen.render();
+      inputBox.focus();
+      return;
+    }
+
+    // Load system prompt
+    if (config?.systemPromptPath) {
+      const sp = resolve(PROJECT_ROOT, config.systemPromptPath);
+      if (existsSync(sp)) {
+        try { systemPrompt = readFileSync(sp, 'utf-8'); } catch (_) { /* ignore */ }
+      }
+    }
+
+    // Load tools
+    try {
+      const { getToolsForEval } = await import('../eval-runner.js');
+      tools = getToolsForEval(config);
+    } catch (_) { tools = []; }
+
+    infoBar.setContent(
+      ` {cyan-fg}${model}{/cyan-fg}  via {white-fg}${provider}{/white-fg}` +
+      `  {#888888-fg}${tools.length} tool${tools.length !== 1 ? 's' : ''} loaded` +
+      `${systemPrompt ? '  system prompt active' : ''}{/#888888-fg}`
+    );
+
+    if (tools.length === 0) {
+      appendSystem('No tools loaded. Configure toolsDir in forge.config.json to test tool routing.');
+    } else {
+      appendSystem(`Tools available: ${tools.map((t) => t.name).join(', ')}`);
+    }
+    if (systemPrompt) appendSystem('System prompt loaded.');
+    appendSystem('Type a message and press Enter to chat.');
+
+    initialized = true;
+    screen.render();
+    inputBox.focus();
+  }
+
+  // ── Log helpers ────────────────────────────────────────────────────────────
+  function appendSystem(text) {
+    log.log(`{#555555-fg}── ${text} ──{/#555555-fg}`);
+  }
+
+  function appendUser(text) {
+    log.log('');
+    log.log(`{cyan-fg}{bold}You:{/bold}{/cyan-fg}  ${text}`);
+  }
+
+  function appendAssistant(text) {
+    if (!text.trim()) return;
+    log.log(`{green-fg}{bold}Model:{/bold}{/green-fg} ${text.replace(/\n/g, '\n       ')}`);
+  }
+
+  function appendToolCall(name, input) {
+    const args = Object.keys(input).length
+      ? '  ' + Object.entries(input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join('  ')
+      : '';
+    log.log(`{yellow-fg}🔧 called:{/yellow-fg} {bold}${name}{/bold}${args}`);
+    log.log(`{#555555-fg}   ↳ stub result returned (no real execution){/#555555-fg}`);
+  }
+
+  function setStatus(text) {
+    statusBar.setContent(text ? ` {#888888-fg}${text}{/#888888-fg}` : '');
+    screen.render();
+  }
+
+  // ── API call with multi-turn tool handling ─────────────────────────────────
+  async function doTurn(depth = 0) {
+    if (depth >= MAX_TOOL_DEPTH) {
+      appendSystem('Max tool call depth reached.');
+      return;
+    }
+
+    const turn = provider === 'anthropic'
+      ? await anthropicTurn(apiKey, model, systemPrompt, apiMessages, tools)
+      : await openaiTurn(apiKey, model, systemPrompt, apiMessages, tools);
+
+    // Show text response (might be a preamble before tool calls)
+    if (turn.text) appendAssistant(turn.text);
+
+    if (turn.toolCalls.length > 0) {
+      // Show each tool call
+      for (const tc of turn.toolCalls) appendToolCall(tc.name, tc.input || {});
+
+      if (provider === 'anthropic') {
+        // Append assistant turn (with tool_use blocks)
+        apiMessages.push({ role: 'assistant', content: turn.rawContent });
+        // Append stub tool results
+        apiMessages.push({
+          role: 'user',
+          content: turn.toolCalls.map((tc) => ({
+            type: 'tool_result',
+            tool_use_id: tc.id,
+            content: `Stub result for ${tc.name}. In production, this would return real data. Input was: ${JSON.stringify(tc.input)}`
+          }))
+        });
+      } else {
+        // OpenAI: append assistant message with tool_calls, then tool results
+        apiMessages.push({ role: 'assistant', ...turn.rawMessage });
+        for (const tc of turn.toolCalls) {
+          apiMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: `Stub result for ${tc.name}. Input: ${JSON.stringify(tc.input)}`
+          });
+        }
+      }
+
+      // Continue conversation to get the final text response
+      setStatus('Processing tool results…');
+      await doTurn(depth + 1);
+    } else {
+      // Final text-only response — add to history
+      if (provider === 'anthropic') {
+        apiMessages.push({ role: 'assistant', content: turn.rawContent });
+      } else {
+        apiMessages.push({ role: 'assistant', content: turn.text });
+      }
+    }
+  }
+
+  async function sendMessage(text) {
+    if (busy || !initialized) return;
+    busy = true;
+
+    appendUser(text);
+
+    if (provider === 'anthropic') {
+      apiMessages.push({ role: 'user', content: text });
+    } else {
+      apiMessages.push({ role: 'user', content: text });
+    }
+
+    setStatus('Waiting for response…');
+    try {
+      await doTurn();
+    } catch (err) {
+      appendSystem(`Error: ${err.message}`);
+    }
+
+    setStatus('');
+    log.log('');
+    busy = false;
+    screen.render();
+    inputBox.focus();
+  }
+
+  // ── Input handling ─────────────────────────────────────────────────────────
+  inputBox.on('submit', (value) => {
+    const text = (value || '').trim();
+    inputBox.clearValue();
+    if (text) sendMessage(text);
+    else inputBox.focus();
+    screen.render();
+  });
+
+  // Tab: toggle focus between input and log for scrolling
+  screenKey('tab', () => {
+    if (screen.focused === inputBox) {
+      log.focus();
+      inputBox.style.border = { fg: '#333333' };
+      log.style.border = { fg: 'cyan' };
+    } else {
+      inputBox.focus();
+      log.style.border = { fg: '#333333' };
+      inputBox.style.border = { fg: 'cyan' };
+    }
+    screen.render();
+  });
+
+  // c = clear log
+  screenKey('c', () => {
+    log.setContent('');
+    appendSystem('Log cleared.');
+    screen.render();
+  });
+
+  // r = reset conversation (keeps connection, clears history)
+  screenKey('r', () => {
+    apiMessages = [];
+    log.setContent('');
+    appendSystem('Conversation reset.');
+    screen.render();
+  });
+
+  container.refresh = () => { /* no-op; chat state is live */ };
+
+  // Defer init so tui.js can append container to the screen before log.log() writes
+  setImmediate(() => { init(); });
+  return container;
+}
+
+export async function refresh(viewBox, config) {
+  // no-op
+}

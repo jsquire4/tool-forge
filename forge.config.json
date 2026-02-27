@@ -1,17 +1,20 @@
 {
+  "model": "gpt-4o-mini",
+  "systemPromptPath": "",
+  "dbPath": "forge.db",
   "project": {
     "name": "tool-forge",
-    "toolsDir": "templates",
-    "testsDir": "templates",
+    "toolsDir": "example/tools",
+    "testsDir": "example/tools/__tests__",
     "evalsDir": "docs/examples/weather-api",
-    "barrelsFile": "templates/barrel-registry.pseudo.ts"
+    "barrelsFile": "example/tools/tools.exports.js"
   },
   "api": {
     "manifestPath": "config/api-endpoints.template.json"
   },
   "verification": {
     "enabled": true,
-    "verifiersDir": "templates",
-    "barrelsFile": "templates/verifiers-barrel.pseudo.ts"
+    "verifiersDir": "example/verification",
+    "barrelsFile": "example/verification/verifiers.exports.js"
   }
 }

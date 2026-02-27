@@ -8,13 +8,15 @@ const OUTPUT_GROUP_KEYWORDS = {
   dividends: ['dividends', 'income', 'yield', 'dividend'],
   performance: ['performance', 'p&l', 'returns', 'net worth', 'performance'],
   transactions: ['transactions', 'orders', 'trades', 'order'],
-  quotes: ['quotes', 'prices', 'market data', 'market_data']
+  quotes: ['quotes', 'prices', 'market data', 'market_data'],
+  weather: ['weather', 'temperature', 'humidity', 'conditions'],
+  forecast: ['forecast', 'prediction', 'outlook', 'precipitation']
 };
 
 const VERIFIER_GROUPS = {
   source_attribution: ['*'],
   concentration_risk: ['holdings'],
-  stale_data: ['holdings', 'performance', 'quotes', 'dividends']
+  stale_data: ['holdings', 'performance', 'quotes', 'dividends', 'weather', 'forecast']
 };
 
 /**

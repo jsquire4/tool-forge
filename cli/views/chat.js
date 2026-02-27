@@ -306,16 +306,17 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   }
 
   async function sendMessage(text) {
-    if (busy || !initialized) return;
+    if (busy) return;
+    if (!initialized) {
+      statusBar.setContent(' {yellow-fg}Not ready — add an API key in Settings → API Keys / Secrets{/yellow-fg}');
+      screen.render();
+      return;
+    }
     busy = true;
 
     appendUser(text);
 
-    if (provider === 'anthropic') {
-      apiMessages.push({ role: 'user', content: text });
-    } else {
-      apiMessages.push({ role: 'user', content: text });
-    }
+    apiMessages.push({ role: 'user', content: text });
 
     setStatus('Waiting for response…');
     try {
@@ -376,6 +377,3 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-export async function refresh(viewBox, config) {
-  // no-op
-}

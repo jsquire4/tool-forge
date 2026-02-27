@@ -43,10 +43,9 @@ function scanVerifierFiles(verifiersDir) {
   const files = readdirSync(abs).filter(
     (f) => f.endsWith('.verifier.ts') || f.endsWith('.verifier.js')
   );
-  const nameRe = /name\s*=\s*['"]([^'"]+)['"]/g;
   for (const file of files) {
     const content = readFileSync(join(abs, file), 'utf-8');
-    const m = nameRe.exec(content);
+    const m = /name\s*=\s*['"]([^'"]+)['"]/.exec(content);
     if (m) names.push(m[1]);
   }
   return names;

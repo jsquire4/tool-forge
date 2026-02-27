@@ -2,10 +2,14 @@
   "name": "tool-forge",
   "version": "0.2.0",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node cli/index.js",
     "forge": "node cli/index.js",
-    "manual": "node cli/index.js --manual"
+    "manual": "node cli/index.js --manual",
+    "service": "node cli/forge-service.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

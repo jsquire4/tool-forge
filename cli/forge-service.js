@@ -175,6 +175,10 @@ watchdog.unref();
 
 async function main() {
   const port = await getPort();
+  server.on('error', (err) => {
+    process.stderr.write(`forge-service listen error: ${err.message}\n`);
+    process.exit(1);
+  });
   server.listen(port, '127.0.0.1', () => {
     writeLock(port);
     process.stdout.write(`forge-service started on port ${port}\n`);

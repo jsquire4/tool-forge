@@ -82,8 +82,12 @@ async function cmdStart() {
         process.exit(0);
       }
     } catch (_) {
-      // Stale lock — proceed to start
+      // Stale lock — remove it before spawning a new instance
     }
+    try {
+      const { unlinkSync } = await import('fs');
+      unlinkSync(LOCK_FILE);
+    } catch (_) { /* ignore */ }
   }
 
   const child = spawn('node', [resolve(__dirname, 'forge-service.js')], {
@@ -92,10 +96,15 @@ async function cmdStart() {
   });
 
   let output = '';
+  let stderrOutput = '';
   child.stdout.on('data', (d) => { output += d.toString(); });
+  child.stderr.on('data', (d) => { stderrOutput += d.toString(); });
 
   await new Promise((res, rej) => {
-    const timeout = setTimeout(() => rej(new Error('Service start timeout')), 10_000);
+    const timeout = setTimeout(() => {
+      const detail = stderrOutput.trim() ? `\nService stderr: ${stderrOutput.trim()}` : '';
+      rej(new Error(`Service start timeout${detail}`));
+    }, 10_000);
     const poll = setInterval(() => {
       if (readLock()) {
         clearTimeout(timeout);

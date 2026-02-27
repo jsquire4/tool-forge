@@ -19,7 +19,7 @@ async function loadData(config) {
   }
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
   const container = blessed.box({
     top: 0,
     left: 0,
@@ -62,7 +62,10 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   setFooter(' {bold}r{/bold} refresh  {bold}c{/bold} clear history  {bold}b{/bold} back');
 
   table.key('c', () => {
-    showClearConfirm(screen, config, container.refresh);
+    const rows = table.getRows ? table.getRows() : null;
+    // Only show confirm if there's actual data (not just the empty-state message)
+    if (!existsSync(resolve(process.cwd(), config?.dbPath || 'forge.db'))) return;
+    showClearConfirm(screen, config, openPopup, closePopup, container.refresh);
   });
 
   container.refresh = async () => {
@@ -105,7 +108,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-function showClearConfirm(screen, config, onClear) {
+function showClearConfirm(screen, config, openPopup, closePopup, onClear) {
   const confirm = blessed.question({
     parent: screen,
     border: 'line',
@@ -118,7 +121,10 @@ function showClearConfirm(screen, config, onClear) {
     keys: true
   });
 
+  openPopup?.();
   confirm.ask('Clear all eval history? This cannot be undone. (y/n)', async (err, answer) => {
+    closePopup?.();
+    confirm.destroy();
     if (!err && /^y/i.test(answer)) {
       try {
         const dbPath = resolve(process.cwd(), config?.dbPath || 'forge.db');
@@ -131,6 +137,3 @@ function showClearConfirm(screen, config, onClear) {
   });
 }
 
-export async function refresh(viewBox, config) {
-  if (viewBox.refresh) await viewBox.refresh();
-}

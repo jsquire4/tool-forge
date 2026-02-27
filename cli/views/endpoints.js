@@ -43,17 +43,23 @@ async function loadData(config) {
   const api = config?.api || {};
   const tools = getExistingTools(project);
   const toolSet = new Set(tools.map((t) => t.toLowerCase().replace(/-/g, '_')));
+  const hasApiConfig = !!(api.manifestPath || api.discovery?.url || api.discovery?.file);
   let endpoints = [];
-  try { endpoints = await loadApis(api); } catch (_) { /* no api config */ }
-  return endpoints.map((e) => ({
-    method: e.method || 'GET',
-    path: e.path || '',
-    toolName: e.name || '—',
-    covered: toolSet.has((e.name || '').toLowerCase().replace(/-/g, '_'))
-  }));
+  if (hasApiConfig) {
+    endpoints = await loadApis(api); // let errors propagate to the view's catch
+  }
+  return {
+    hasApiConfig,
+    endpoints: endpoints.map((e) => ({
+      method: e.method || 'GET',
+      path: e.path || '',
+      toolName: e.name || '—',
+      covered: toolSet.has((e.name || '').toLowerCase().replace(/-/g, '_'))
+    }))
+  };
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
   const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
 
   const table = blessed.listtable({
@@ -116,12 +122,15 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     await container.refresh();
   }
 
-  table.key('a', () => showManualAddPrompt(screen, enqueueAndReport));
+  table.key('a', () => showManualAddPrompt(screen, openPopup, closePopup, enqueueAndReport));
 
   container.refresh = async () => {
     try {
-      const rows = await loadData(config);
-      if (rows.length === 0) {
+      const { rows, hasApiConfig } = await loadData(config).then((d) => ({ rows: d.endpoints, hasApiConfig: d.hasApiConfig }));
+      if (!hasApiConfig) {
+        table.setData([['Method', 'Path', 'Tool Name', 'Status'],
+          ['{yellow-fg}No API source configured{/yellow-fg}', 'Go to Settings → Configure API Source', '', '']]);
+      } else if (rows.length === 0) {
         table.setData([['Method', 'Path', 'Tool Name', 'Status'], ['No endpoints found', '', '', '']]);
       } else {
         table.setData([
@@ -143,7 +152,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-function showManualAddPrompt(screen, onAdd) {
+function showManualAddPrompt(screen, openPopup, closePopup, onAdd) {
   const form = blessed.form({
     parent: screen, border: 'line', height: 12, width: 60,
     top: 'center', left: 'center', label: ' Add Endpoint Manually ', keys: true, tags: true
@@ -169,22 +178,26 @@ function showManualAddPrompt(screen, onAdd) {
     parent: form, top: 8, left: 2, width: 10, height: 1, content: ' Submit ',
     style: { bg: 'green', fg: 'white', focus: { bg: 'blue' } }, keys: true, mouse: true
   });
+  const cancelBtn = blessed.button({
+    parent: form, top: 8, left: 14, width: 10, height: 1, content: ' Cancel ',
+    style: { bg: 'red', fg: 'white', focus: { bg: 'blue' } }, keys: true, mouse: true
+  });
 
+  openPopup?.();
   submitBtn.on('press', () => {
     const endpoint = {
       method: methodInput.getValue().toUpperCase() || 'GET',
       path: pathInput.getValue() || '/',
       name: nameInput.getValue() || 'unnamed_tool'
     };
+    closePopup?.();
     form.destroy();
     screen.render();
-    onAdd(endpoint);
+    Promise.resolve(onAdd(endpoint)).catch(() => {});
   });
-  form.key(['escape'], () => { form.destroy(); screen.render(); });
+  cancelBtn.on('press', () => { closePopup?.(); form.destroy(); screen.render(); });
+  form.key(['escape'], () => { closePopup?.(); form.destroy(); screen.render(); });
   methodInput.focus();
   screen.render();
 }
 
-export async function refresh(viewBox, config) {
-  if (typeof viewBox.refresh === 'function') await viewBox.refresh();
-}

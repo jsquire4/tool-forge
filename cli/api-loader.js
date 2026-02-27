@@ -107,7 +107,10 @@ function loadFromOpenApiFile(filePath) {
   const abs = resolve(process.cwd(), filePath);
   if (!existsSync(abs)) return [];
   const raw = readFileSync(abs, 'utf-8');
-  const spec = JSON.parse(raw);
+  let spec;
+  try { spec = JSON.parse(raw); } catch (err) {
+    throw new Error(`Failed to parse OpenAPI file ${filePath}: ${err.message}`);
+  }
   return parseOpenApiPaths(spec);
 }
 
@@ -120,7 +123,10 @@ function loadFromManifest(manifestPath) {
   const abs = resolve(process.cwd(), manifestPath);
   if (!existsSync(abs)) return [];
   const raw = readFileSync(abs, 'utf-8');
-  const manifest = JSON.parse(raw);
+  let manifest;
+  try { manifest = JSON.parse(raw); } catch (err) {
+    throw new Error(`Failed to parse manifest ${manifestPath}: ${err.message}`);
+  }
   const endpoints = manifest.endpoints || [];
   return endpoints.map((e) => ({
     path: e.path,

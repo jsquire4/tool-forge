@@ -11,7 +11,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
 
 export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
-  const toolName = config._evalTarget || '(unknown)';
+  const toolName = config._evalTarget;
+  if (!toolName) {
+    // Navigated here directly without selecting a tool — redirect back
+    const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
+    blessed.box({
+      parent: container, top: 'center', left: 'center', width: '60%', height: 3,
+      tags: true, align: 'center',
+      content: '{yellow-fg}No tool selected.\nGo to Tools & Evals and press Enter on a tool to run its evals.{/yellow-fg}'
+    });
+    setImmediate(() => { screen.render(); });
+    return container;
+  }
 
   const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
 
@@ -62,6 +73,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   // ── State ─────────────────────────────────────────────────────────────────
   let total = 0;
   let passedCount = 0;
+  let skippedCount = 0;
   let doneCount = 0;
   const rows = [];
 
@@ -76,7 +88,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       ` ${bar}\n` +
       ` {white-fg}${doneCount}/${total}{/white-fg}  ` +
       `{green-fg}${passedCount} passed{/green-fg}  ` +
-      `{red-fg}${doneCount - passedCount} failed{/red-fg}  ` +
+      `{red-fg}${doneCount - passedCount - skippedCount} failed{/red-fg}  ` +
+      `{#888888-fg}${skippedCount} skipped{/#888888-fg}  ` +
       `${pct}%`
     );
     screen.render();
@@ -150,7 +163,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     try {
       summary = await runEvals(toolName, config, PROJECT_ROOT, (progress) => {
         doneCount = progress.done;
-        if (progress.passed) passedCount++;
+        if (progress.passed === null) skippedCount++;
+        else if (progress.passed) passedCount++;
         rows.push({
           id: progress.caseId,
           status: progress.passed === null ? 'skipped' : progress.passed ? 'passed' : 'failed',
@@ -186,6 +200,3 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-export async function refresh(viewBox, config) {
-  // Eval run is one-shot; navigate back and reselect to re-run.
-}

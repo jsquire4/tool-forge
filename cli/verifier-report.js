@@ -1,6 +1,6 @@
 /**
  * Verifier Report — Gap detection: tools without verifier coverage.
- * Run with: node cli/index.js --verifiers
+ * Consumed by the Verifier Coverage TUI view.
  */
 
 import { getToolsWithMetadata } from './tools-scanner.js';

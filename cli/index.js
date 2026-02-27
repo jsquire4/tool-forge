@@ -28,7 +28,13 @@ function loadConfig() {
     console.error(`No ${CONFIG_FILE} found in ${projectRoot}. Create one from config/forge.config.template.json`);
     process.exit(1);
   }
-  return JSON.parse(readFileSync(configPath, 'utf-8'));
+  const raw = readFileSync(configPath, 'utf-8');
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error(`${CONFIG_FILE} contains invalid JSON: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 async function main() {

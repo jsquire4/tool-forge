@@ -41,7 +41,7 @@ async function loadData(config) {
   });
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
   const container = blessed.box({
     top: 0,
     left: 0,
@@ -85,7 +85,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   table.key('enter', () => {
     const idx = table.selected;
     if (idx < 1 || !rowData[idx - 1]) return;
-    showActionMenu(screen, rowData[idx - 1], navigate, config, (msg, isError) => {
+    showActionMenu(screen, rowData[idx - 1], navigate, config, openPopup, closePopup, (msg, isError) => {
       statusBar.setContent(isError ? ` {red-fg}${msg}{/red-fg}` : ` {green-fg}${msg}{/green-fg}`);
       screen.render();
     });
@@ -108,7 +108,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-function showActionMenu(screen, tool, navigate, config, setStatus) {
+function showActionMenu(screen, tool, navigate, config, openPopup, closePopup, setStatus) {
   const items = [
     `{cyan-fg}▸{/cyan-fg} Run evals  {#888888-fg}(uses API key from .env){/#888888-fg}`,
     `  View eval results`,
@@ -134,7 +134,9 @@ function showActionMenu(screen, tool, navigate, config, setStatus) {
     items
   });
 
+  openPopup?.();
   menu.on('select', async (item, idx) => {
+    closePopup?.();
     menu.destroy();
     screen.render();
 
@@ -151,11 +153,8 @@ function showActionMenu(screen, tool, navigate, config, setStatus) {
     // idx 3 = cancel, do nothing
   });
 
-  menu.key(['escape', 'q'], () => { menu.destroy(); screen.render(); });
+  menu.key(['escape', 'q'], () => { closePopup?.(); menu.destroy(); screen.render(); });
   menu.focus();
   screen.render();
 }
 
-export async function refresh(viewBox, config) {
-  if (viewBox.refresh) await viewBox.refresh();
-}

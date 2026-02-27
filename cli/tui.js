@@ -10,7 +10,7 @@
  */
 
 import blessed from 'blessed';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -83,7 +83,8 @@ export async function runTui(config) {
   // ── View management ───────────────────────────────────────────────────────
   let currentViewName = 'main-menu';
   let currentView = null;
-  const moduleCache = {};   // module-level cache (ESM import cache still applies, but this avoids re-await)
+  const moduleCache = {};   // avoids re-awaiting the same ESM module import
+  let popupDepth = 0;       // incremented by openPopup(), decremented by closePopup()
 
   // View-specific screen key bindings: cleared each time we navigate away.
   const viewKeys = [];      // [{ keys, fn }, ...]
@@ -95,6 +96,32 @@ export async function runTui(config) {
   function screenKey(keys, fn) {
     viewKeys.push({ keys, fn });
     screen.key(keys, fn);
+  }
+
+  /** Call before showing any popup overlay. Prevents global 'b'/'escape' from navigating away. */
+  function openPopup() { popupDepth++; }
+
+  /** Call when a popup overlay is closed/destroyed. */
+  function closePopup() { popupDepth = Math.max(0, popupDepth - 1); }
+
+  /**
+   * Start the forge service if it is not already running.
+   * Spawns forge-service.js detached. The header poll picks up the new lock within 3s.
+   */
+  async function startService() {
+    const lock = readLock();
+    if (lock) {
+      const health = await fetchHealth(lock.port);
+      if (health) return; // Already alive
+      // Stale lock — remove before spawning
+      try { unlinkSync(LOCK_FILE); } catch (_) { /* ignore */ }
+    }
+    const { spawn } = await import('child_process');
+    const child = spawn('node', [resolve(__dirname, 'forge-service.js')], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
   }
 
   async function loadModule(name) {
@@ -111,7 +138,10 @@ export async function runTui(config) {
     }
     viewKeys.length = 0;
 
-    // 2. Remove the outgoing view's DOM tree from the content node.
+    // 2. Reset popup depth — any orphaned popups from the outgoing view are gone.
+    popupDepth = 0;
+
+    // 3. Remove the outgoing view's DOM tree from the content node.
     if (currentView) {
       content.remove(currentView);
       currentView = null;
@@ -119,9 +149,12 @@ export async function runTui(config) {
 
     currentViewName = name;
 
-    // 3. Create a fresh view instance.
+    // 4. Create a fresh view instance.
     const mod = await loadModule(name);
-    const viewBox = mod.createView({ screen, content, config, navigate, setFooter, screenKey });
+    const viewBox = mod.createView({
+      screen, content, config, navigate, setFooter, screenKey,
+      openPopup, closePopup, startService
+    });
     currentView = viewBox;
     content.append(viewBox);
 
@@ -177,30 +210,49 @@ export async function runTui(config) {
   screen.key(['q', 'C-c'], () => {
     const lock = readLock();
     if (lock) {
+      openPopup();
       const confirm = blessed.question({
         parent: screen, border: 'line', height: 'shrink', width: 'half',
         top: 'center', left: 'center', label: ' {red-fg}Quit{/red-fg} ', tags: true, keys: true
       });
-      confirm.ask('Forge service is active. Quit anyway? (y/n)', (err, answer) => {
-        if (!err && /^y/i.test(answer)) cleanup();
+      confirm.ask('Forge service is active. Also stop the service? (y/n)', (err, answer) => {
+        closePopup();
+        confirm.destroy();
+        const stopService = !err && /^y/i.test(answer);
+        cleanup(stopService);
       });
     } else {
-      cleanup();
+      cleanup(false);
     }
   });
 
   screen.key(['b', 'escape'], () => {
+    if (popupDepth > 0) return; // a popup is open — let it handle the key
     if (currentViewName !== 'main-menu') navigate('main-menu');
   });
 
   screen.key('r', () => {
+    if (popupDepth > 0) return;
     currentView?.refresh?.();
     screen.render();
   });
 
-  function cleanup() {
+  function cleanup(stopService = false) {
     clearInterval(headerTimer);
-    screen.destroy();
+    if (stopService) {
+      const lock = readLock();
+      if (lock) {
+        // Fire-and-forget shutdown request — don't wait, just exit after a short delay
+        import('http').then(({ request }) => {
+          try {
+            const req = request({ hostname: '127.0.0.1', port: lock.port, path: '/shutdown', method: 'DELETE' });
+            req.on('error', () => {});
+            req.end();
+          } catch (_) {}
+        }).catch(() => {});
+      }
+    }
+    try { screen.destroy(); } catch (_) {}
     process.exit(0);
   }
 

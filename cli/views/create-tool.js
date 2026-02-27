@@ -43,18 +43,19 @@ async function loadUncovered(config) {
   const api = config?.api || {};
   const tools = getExistingTools(project);
   const toolSet = new Set(tools.map((t) => t.toLowerCase().replace(/-/g, '_')));
+  const hasApiConfig = !!(api.manifestPath || api.discovery?.url || api.discovery?.file);
   let endpoints = [];
-  try {
-    const all = await loadApis(api);
+  if (hasApiConfig) {
+    const all = await loadApis(api); // let errors propagate to the view's catch
     endpoints = all.filter((e) => {
       const name = (e.name || '').toLowerCase().replace(/-/g, '_');
       return !toolSet.has(name);
     });
-  } catch (_) { /* no api config */ }
-  return endpoints;
+  }
+  return { endpoints, hasApiConfig };
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
   // ── Container holds everything ────────────────────────────────────────────
   const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
 
@@ -126,23 +127,29 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     doEnqueue(endpoints[idx - 1]);
   });
 
-  table.key('a', () => showManualAddPrompt(screen, doEnqueue));
+  table.key('a', () => showManualAddPrompt(screen, openPopup, closePopup, doEnqueue));
 
   container.refresh = async () => {
     try {
-      endpoints = await loadUncovered(config);
+      const result = await loadUncovered(config);
+      endpoints = result.endpoints;
       const lock = readLock();
       const svcNote = lock ? '{green-fg}[service active]{/green-fg}' : '{#888888-fg}[no service — will write pending spec]{/#888888-fg}';
 
-      if (endpoints.length === 0) {
+      if (!result.hasApiConfig) {
+        table.setData([['#', 'Method', 'Path', 'Suggested Name'],
+          ['', '{yellow-fg}No API source configured{/yellow-fg}', 'Go to Settings → Configure API Source', '']]);
+        statusBar.setContent(` ${svcNote}`);
+      } else if (endpoints.length === 0) {
         table.setData([['#', 'Method', 'Path', 'Suggested Name'], ['', 'All endpoints have tools ✓', '', '']]);
+        statusBar.setContent(` ${svcNote}`);
       } else {
         table.setData([
           ['#', 'Method', 'Path', 'Suggested Name'],
           ...endpoints.map((e, i) => [String(i + 1), e.method || 'GET', e.path || '', e.name || ''])
         ]);
+        statusBar.setContent(` ${svcNote}  Press Enter to queue an endpoint`);
       }
-      statusBar.setContent(` ${svcNote}  Press Enter to queue an endpoint`);
     } catch (err) {
       table.setData([['#', 'Method', 'Path', 'Suggested Name'], ['Error: ' + err.message, '', '', '']]);
     }
@@ -154,7 +161,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-function showManualAddPrompt(screen, onAdd) {
+function showManualAddPrompt(screen, openPopup, closePopup, onAdd) {
   const form = blessed.form({
     parent: screen, border: 'line', height: 13, width: 60,
     top: 'center', left: 'center', label: ' Add Endpoint Manually ', keys: true, tags: true
@@ -185,23 +192,22 @@ function showManualAddPrompt(screen, onAdd) {
     style: { bg: 'red', fg: 'white', focus: { bg: 'blue' } }, keys: true, mouse: true
   });
 
+  openPopup?.();
   submitBtn.on('press', () => {
     const endpoint = {
       method: methodInput.getValue().toUpperCase() || 'GET',
       path: pathInput.getValue() || '/',
       name: nameInput.getValue() || 'unnamed_tool'
     };
+    closePopup?.();
     form.destroy();
     screen.render();
-    onAdd(endpoint);
+    Promise.resolve(onAdd(endpoint)).catch(() => {});
   });
-  cancelBtn.on('press', () => { form.destroy(); screen.render(); });
-  form.key(['escape'], () => { form.destroy(); screen.render(); });
+  cancelBtn.on('press', () => { closePopup?.(); form.destroy(); screen.render(); });
+  form.key(['escape'], () => { closePopup?.(); form.destroy(); screen.render(); });
 
   methodInput.focus();
   screen.render();
 }
 
-export async function refresh(viewBox, config) {
-  if (typeof viewBox.refresh === 'function') await viewBox.refresh();
-}

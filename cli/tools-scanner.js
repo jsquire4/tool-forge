@@ -39,10 +39,9 @@ function scanToolFiles(toolsDir) {
   if (!existsSync(abs)) return [];
   const names = [];
   const files = readdirSync(abs).filter((f) => f.endsWith('.tool.ts') || f.endsWith('.tool.js'));
-  const nameRe = /name:\s*['"]([^'"]+)['"]/g;
   for (const file of files) {
     const content = readFileSync(join(abs, file), 'utf-8');
-    const m = nameRe.exec(content);
+    const m = /name:\s*['"]([^'"]+)['"]/.exec(content);
     if (m) names.push(m[1]);
   }
   return names;

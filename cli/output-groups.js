@@ -4,10 +4,10 @@
  */
 
 const OUTPUT_GROUP_KEYWORDS = {
-  holdings: ['holdings', 'positions', 'allocation', 'portfolio', 'positions'],
+  holdings: ['holdings', 'positions', 'allocation', 'portfolio'],
   dividends: ['dividends', 'income', 'yield', 'dividend'],
-  performance: ['performance', 'p&l', 'returns', 'net worth', 'performance'],
-  transactions: ['transactions', 'orders', 'trades', 'order'],
+  performance: ['performance', 'p&l', 'returns', 'net worth'],
+  transactions: ['transactions', 'orders', 'trades'],
   quotes: ['quotes', 'prices', 'market data', 'market_data'],
   weather: ['weather', 'temperature', 'humidity', 'conditions'],
   forecast: ['forecast', 'prediction', 'outlook', 'precipitation']

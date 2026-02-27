@@ -103,7 +103,7 @@ function maskValue(val) {
   return val.slice(0, 3) + '****';
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
   const list = blessed.list({
     top: 0,
     left: 0,
@@ -124,10 +124,11 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
   list.on('select', (item, index) => {
     switch (index) {
-      case 0: showModelSelector(screen, config); break;
-      case 1: showPromptEditor(screen, config, 'agent'); break;
-      case 2: showPromptEditor(screen, config, 'skill'); break;
-      case 3: showEnvManager(screen, config); break;
+      case 0: showModelSelector(screen, config, openPopup, closePopup); break;
+      case 1: showPromptEditor(screen, config, 'agent', openPopup, closePopup); break;
+      case 2: showPromptEditor(screen, config, 'skill', openPopup, closePopup); break;
+      case 3: showApiSourceEditor(screen, config, openPopup, closePopup); break;
+      case 4: showEnvManager(screen, config, openPopup, closePopup); break;
     }
   });
 
@@ -157,6 +158,12 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       ? '{#888888-fg}no keys{/#888888-fg}'
       : `${envCount} key(s)${providers.length ? '  ' + providers.join(' ') : ''}`;
 
+    // API source status
+    const apiSource = cfg.api?.manifestPath || cfg.api?.discovery?.url || cfg.api?.discovery?.file;
+    const apiSourceStatus = apiSource
+      ? `{green-fg}${apiSource}{/green-fg}`
+      : '{yellow-fg}not configured{/yellow-fg}';
+
     const row = (num, label, val) =>
       `  {bold}${num}.{/bold} {white-fg}${label.padEnd(22)}{/white-fg}${val}`;
 
@@ -164,7 +171,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       row('1', 'Model', modelDisplay),
       row('2', 'Agent System Prompt', systemPromptStatus),
       row('3', 'Forge Skill Prompt', skillStatus),
-      row('4', 'API Keys / Secrets', keysSummary)
+      row('4', 'API Source', apiSourceStatus),
+      row('5', 'API Keys / Secrets', keysSummary)
     ]);
     screen.render();
   };
@@ -174,7 +182,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return list;
 }
 
-function showModelSelector(screen, config) {
+function showModelSelector(screen, config, openPopup, closePopup) {
   const cfg = loadConfig();
   const current = cfg.model || 'claude-sonnet-4-6';
   const envMap = loadEnv();
@@ -262,13 +270,14 @@ function showModelSelector(screen, config) {
     screen.render();
   }
 
+  openPopup?.();
   list.on('select', (item, idx) => applySelection(idx));
-  list.key(['escape', 'b'], () => { popup.destroy(); screen.render(); });
+  list.key(['escape', 'b'], () => { closePopup?.(); popup.destroy(); screen.render(); });
   list.focus();
   screen.render();
 }
 
-function showPromptEditor(screen, config, type) {
+function showPromptEditor(screen, config, type, openPopup, closePopup) {
   const cfg = loadConfig();
   let filePath, label;
 
@@ -331,6 +340,8 @@ function showPromptEditor(screen, config, type) {
     });
   });
 
+  openPopup?.();
+
   box.key('p', () => {
     if (type !== 'agent') return; // Only agent path is changeable
     const prompt = blessed.prompt({
@@ -349,11 +360,22 @@ function showPromptEditor(screen, config, type) {
         cfg.systemPromptPath = val;
         saveConfig(cfg);
         config.systemPromptPath = val;
+        // Reload the file content in the box
+        const newPath = resolve(PROJECT_ROOT, val);
+        let newContent = '';
+        if (existsSync(newPath)) {
+          try { newContent = readFileSync(newPath, 'utf-8'); } catch (_) { newContent = '(could not read file)'; }
+        } else {
+          newContent = '(file not found: ' + val + ')';
+        }
+        box.setContent(newContent);
+        screen.render();
       }
     });
   });
 
   box.key(['escape', 'b', 'q'], () => {
+    closePopup?.();
     box.destroy();
     helpBar.destroy();
     screen.render();
@@ -363,7 +385,109 @@ function showPromptEditor(screen, config, type) {
   screen.render();
 }
 
-function showEnvManager(screen, config) {
+function showApiSourceEditor(screen, config, openPopup, closePopup) {
+  const cfg = loadConfig();
+  const api = cfg.api || {};
+
+  // Determine current values
+  const currentManifest = api.manifestPath || '';
+  const currentDiscoveryUrl = api.discovery?.url || '';
+  const currentDiscoveryFile = api.discovery?.file || '';
+
+  const box = blessed.form({
+    parent: screen,
+    border: 'line',
+    top: 2,
+    left: 4,
+    right: 4,
+    height: 14,
+    label: ' Configure API Source ',
+    tags: true,
+    keys: true
+  });
+
+  blessed.text({ parent: box, top: 0, left: 1, tags: true,
+    content: '{#888888-fg}Set one or more sources. Manifest overrides OpenAPI for the same endpoint.{/#888888-fg}' });
+
+  blessed.text({ parent: box, top: 2, left: 1, content: 'Manifest path:   ' });
+  const manifestInput = blessed.textbox({
+    parent: box, top: 2, left: 18, right: 2, height: 1,
+    inputOnFocus: true, style: { fg: 'white', bg: '#1a3a5c' },
+    value: currentManifest
+  });
+
+  blessed.text({ parent: box, top: 4, left: 1, content: 'OpenAPI URL:     ' });
+  const urlInput = blessed.textbox({
+    parent: box, top: 4, left: 18, right: 2, height: 1,
+    inputOnFocus: true, style: { fg: 'white', bg: '#1a3a5c' },
+    value: currentDiscoveryUrl
+  });
+
+  blessed.text({ parent: box, top: 6, left: 1, content: 'OpenAPI file:    ' });
+  const fileInput = blessed.textbox({
+    parent: box, top: 6, left: 18, right: 2, height: 1,
+    inputOnFocus: true, style: { fg: 'white', bg: '#1a3a5c' },
+    value: currentDiscoveryFile
+  });
+
+  const statusBar = blessed.box({ parent: box, bottom: 2, left: 1, right: 1, height: 1, tags: true });
+
+  const saveBtn = blessed.button({
+    parent: box, bottom: 0, left: 1, width: 10, height: 1, content: ' Save ',
+    style: { bg: 'green', fg: 'white', focus: { bg: 'blue' } }, keys: true, mouse: true
+  });
+  const cancelBtn = blessed.button({
+    parent: box, bottom: 0, left: 13, width: 10, height: 1, content: ' Cancel ',
+    style: { bg: 'red', fg: 'white', focus: { bg: 'blue' } }, keys: true, mouse: true
+  });
+
+  function doClose() {
+    closePopup?.();
+    box.destroy();
+    screen.render();
+  }
+
+  saveBtn.on('press', () => {
+    const manifest = manifestInput.getValue().trim();
+    const url = urlInput.getValue().trim();
+    const file = fileInput.getValue().trim();
+
+    cfg.api = cfg.api || {};
+    if (manifest) {
+      cfg.api.manifestPath = manifest;
+    } else {
+      delete cfg.api.manifestPath;
+    }
+    if (url || file) {
+      cfg.api.discovery = { type: 'openapi' };
+      if (url) cfg.api.discovery.url = url;
+      if (file) cfg.api.discovery.file = file;
+    } else {
+      delete cfg.api.discovery;
+    }
+    // Sync runtime config
+    config.api = cfg.api;
+
+    try {
+      saveConfig(cfg);
+      statusBar.setContent('{green-fg}Saved!{/green-fg}');
+      screen.render();
+      setTimeout(doClose, 600);
+    } catch (err) {
+      statusBar.setContent(`{red-fg}Save failed: ${err.message}{/red-fg}`);
+      screen.render();
+    }
+  });
+
+  cancelBtn.on('press', doClose);
+  box.key(['escape', 'b'], doClose);
+
+  openPopup?.();
+  manifestInput.focus();
+  screen.render();
+}
+
+function showEnvManager(screen, config, openPopup, closePopup) {
   let envMap = loadEnv();
   let unsaved = false;
 
@@ -507,6 +631,8 @@ function showEnvManager(screen, config) {
     renderTable();
   });
 
+  openPopup?.();
+
   function closeEnvManager() {
     if (unsaved) {
       const confirm = blessed.question({
@@ -521,13 +647,16 @@ function showEnvManager(screen, config) {
         keys: true
       });
       confirm.ask('Discard unsaved changes? (y/n)', (err, answer) => {
+        confirm.destroy();
         if (!err && /^y/i.test(answer)) {
+          closePopup?.();
           container.destroy();
           helpBar.destroy();
           screen.render();
         }
       });
     } else {
+      closePopup?.();
       container.destroy();
       helpBar.destroy();
       screen.render();
@@ -541,6 +670,3 @@ function showEnvManager(screen, config) {
   screen.render();
 }
 
-export async function refresh(viewBox, config) {
-  if (viewBox.refresh) await viewBox.refresh();
-}

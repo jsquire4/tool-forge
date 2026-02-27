@@ -4,7 +4,17 @@
 
 import blessed from 'blessed';
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, '../..');
+const LOCK_FILE = resolve(PROJECT_ROOT, '.forge-service.lock');
+
+function readLock() {
+  if (!existsSync(LOCK_FILE)) return null;
+  try { return JSON.parse(readFileSync(LOCK_FILE, 'utf-8')); } catch (_) { return null; }
+}
 import { loadApis } from '../api-loader.js';
 import { getExistingTools, getToolsWithMetadata } from '../tools-scanner.js';
 import { getExistingVerifiers } from '../verifier-scanner.js';
@@ -71,7 +81,8 @@ async function buildStats(config) {
     }
   } catch (_) { /* skip */ }
 
-  return { toolsCount: tools.length, uncovered, endpointsTotal: endpoints.length, allCovered, hasEvalHistory, model, chatProvider };
+  const serviceRunning = readLock() !== null;
+  return { toolsCount: tools.length, uncovered, endpointsTotal: endpoints.length, allCovered, hasEvalHistory, model, chatProvider, serviceRunning };
 }
 
 function colorStat(text, level) {
@@ -111,13 +122,24 @@ function buildItems(stats) {
   ];
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, startService }) {
   const container = blessed.box({
     top: 0,
     left: 0,
     width: '100%',
     height: '100%',
     tags: true
+  });
+
+  // ── Service notice (shown when forge service is not running) ──────────────
+  const serviceNotice = blessed.box({
+    parent: container,
+    bottom: 0,
+    left: 0,
+    width: '100%',
+    height: 1,
+    tags: true,
+    hidden: true
   });
 
   // ── Title banner ──────────────────────────────────────────────────────────
@@ -156,7 +178,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     top: BANNER_HEIGHT + 1,
     left: 2,
     width: '100%-4',
-    height: `100%-${BANNER_HEIGHT + 2}`,
+    height: `100%-${BANNER_HEIGHT + 3}`,
     tags: true,
     keys: true,
     vi: true,
@@ -177,15 +199,47 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (MENU_ITEMS[idx]) navigate(MENU_ITEMS[idx].key);
   });
 
-  setFooter(
-    ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
-    '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
-  );
+  // Register 's' to start the forge service from the main menu
+  screenKey('s', async () => {
+    serviceNotice.setContent(
+      ' {yellow-fg}⟳ Starting forge service…{/yellow-fg}'
+    );
+    serviceNotice.show();
+    screen.render();
+    try {
+      await startService?.();
+      serviceNotice.setContent(
+        ' {green-fg}◉ Forge service started — queue is ready{/green-fg}'
+      );
+    } catch (err) {
+      serviceNotice.setContent(` {red-fg}⚠ Failed to start service: ${err.message}{/red-fg}`);
+    }
+    screen.render();
+    setTimeout(() => { container.refresh(); }, 500);
+  });
 
   container.refresh = async () => {
     try {
       const stats = await buildStats(config);
       list.setItems(buildItems(stats));
+
+      if (stats.serviceRunning) {
+        serviceNotice.hide();
+        setFooter(
+          ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
+          '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
+        );
+      } else {
+        serviceNotice.setContent(
+          ' {#888888-fg}○ Forge service not running — press {cyan-fg}s{/cyan-fg} to start it' +
+          ' (required to queue endpoints to Claude){/#888888-fg}'
+        );
+        serviceNotice.show();
+        setFooter(
+          ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
+          '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}s{/cyan-fg} start service  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
+        );
+      }
     } catch (_) {
       list.setItems(MENU_ITEMS.map((m, i) => ` ${i + 1}  ${m.icon}  ${m.label}`));
     }
@@ -198,6 +252,3 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
-export async function refresh(viewBox, config) {
-  if (viewBox.refresh) await viewBox.refresh();
-}

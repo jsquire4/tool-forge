@@ -66,7 +66,10 @@ async function callAnthropic(apiKey, model, systemPrompt, userMessage, tools) {
     'x-api-key': apiKey
   }, body);
 
-  const data = JSON.parse(result.body);
+  let data;
+  try { data = JSON.parse(result.body); } catch (err) {
+    throw new Error(`Anthropic API returned non-JSON (status ${result.status}): ${result.body.slice(0, 120)}`);
+  }
   if (data.error) throw new Error(`Anthropic API: ${data.error.message}`);
   const toolsCalled = (data.content || []).filter((b) => b.type === 'tool_use').map((b) => b.name);
   const responseText = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
@@ -89,7 +92,10 @@ async function callOpenAI(apiKey, model, systemPrompt, userMessage, tools) {
     'Authorization': `Bearer ${apiKey}`
   }, body);
 
-  const data = JSON.parse(result.body);
+  let data;
+  try { data = JSON.parse(result.body); } catch (err) {
+    throw new Error(`OpenAI API returned non-JSON (status ${result.status}): ${result.body.slice(0, 120)}`);
+  }
   if (data.error) throw new Error(`OpenAI API: ${data.error.message}`);
   const message = data.choices?.[0]?.message || {};
   const toolsCalled = (message.tool_calls || []).map((tc) => tc.function?.name).filter(Boolean);
@@ -136,10 +142,16 @@ function checkAssertions(evalCase, { toolsCalled, responseText }) {
   }
 
   // ── Response content assertions ─────────────────────────────────────────
-  // Only checked against the model's preamble text (before tool calls).
-  // If the model only returned tool_use blocks and no text, these are skipped.
+  // Text assertions are checked against the model's preamble text.
+  // If requiresPreamble is true and the model returned only tool calls (no text),
+  // text assertions fail. Otherwise they are skipped when no text is present.
 
+  const requiresPreamble = evalCase.requiresPreamble === true;
   const checkText = responseText.length > 0;
+
+  if (requiresPreamble && !checkText && toolsCalled.length > 0) {
+    failures.push('requiresPreamble: model returned only tool calls, no preamble text');
+  }
 
   if (expect.responseNonEmpty) {
     if (!checkText && toolsCalled.length === 0) {
@@ -410,6 +422,7 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
       total_cases: allCases.length,
       passed,
       failed,
+      skipped,
       notes: `provider:${provider} model:${model}`
     });
   } catch (_) { /* db write failure is non-fatal */ }

@@ -11,97 +11,7 @@
 
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { resolve, join } from 'path';
-import { request as httpsRequest } from 'https';
-
-// ── API helpers ────────────────────────────────────────────────────────────
-
-function httpsPost(hostname, path, headers, body, timeoutMs = 30_000) {
-  return new Promise((res, rej) => {
-    const payload = JSON.stringify(body);
-    const req = httpsRequest(
-      { hostname, path, method: 'POST', headers: { ...headers, 'Content-Length': Buffer.byteLength(payload) } },
-      (resp) => {
-        let data = '';
-        resp.on('data', (d) => { data += d; });
-        resp.on('end', () => res({ status: resp.statusCode, body: data }));
-      }
-    );
-    req.setTimeout(timeoutMs, () => { req.destroy(new Error('API timeout')); });
-    req.on('error', rej);
-    req.write(payload);
-    req.end();
-  });
-}
-
-function toAnthropicTool(tool) {
-  return {
-    name: tool.name,
-    description: tool.description || '',
-    input_schema: tool.jsonSchema || { type: 'object', properties: {}, required: [] }
-  };
-}
-
-function toOpenAiTool(tool) {
-  return {
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description || '',
-      parameters: tool.jsonSchema || { type: 'object', properties: {} }
-    }
-  };
-}
-
-async function callAnthropic(apiKey, model, systemPrompt, userMessage, tools) {
-  const body = {
-    model: model || 'claude-sonnet-4-6',
-    max_tokens: 1024,
-    ...(systemPrompt ? { system: systemPrompt } : {}),
-    messages: [{ role: 'user', content: userMessage }],
-    tools: tools.map(toAnthropicTool)
-  };
-  const result = await httpsPost('api.anthropic.com', '/v1/messages', {
-    'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01',
-    'x-api-key': apiKey
-  }, body);
-
-  let data;
-  try { data = JSON.parse(result.body); } catch (err) {
-    throw new Error(`Anthropic API returned non-JSON (status ${result.status}): ${result.body.slice(0, 120)}`);
-  }
-  if (data.error) throw new Error(`Anthropic API: ${data.error.message}`);
-  const toolsCalled = (data.content || []).filter((b) => b.type === 'tool_use').map((b) => b.name);
-  const responseText = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-  return { toolsCalled, responseText };
-}
-
-async function callOpenAI(apiKey, model, systemPrompt, userMessage, tools) {
-  const messages = [];
-  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-  messages.push({ role: 'user', content: userMessage });
-
-  const body = {
-    model: model || 'gpt-4o-mini',
-    messages,
-    tools: tools.map(toOpenAiTool),
-    tool_choice: 'auto'
-  };
-  const result = await httpsPost('api.openai.com', '/v1/chat/completions', {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`
-  }, body);
-
-  let data;
-  try { data = JSON.parse(result.body); } catch (err) {
-    throw new Error(`OpenAI API returned non-JSON (status ${result.status}): ${result.body.slice(0, 120)}`);
-  }
-  if (data.error) throw new Error(`OpenAI API: ${data.error.message}`);
-  const message = data.choices?.[0]?.message || {};
-  const toolsCalled = (message.tool_calls || []).map((tc) => tc.function?.name).filter(Boolean);
-  const responseText = message.content || '';
-  return { toolsCalled, responseText };
-}
+import { llmTurn } from './api-client.js';
 
 // ── Assertion checker ──────────────────────────────────────────────────────
 
@@ -360,7 +270,6 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
     for (const c of cases) allCases.push({ ...c, _evalType: type });
   }
 
-  const callApi = useAnthropic ? callAnthropic : callOpenAI;
   const apiKey  = useAnthropic ? anthropicKey : openaiKey;
 
   const results = [];
@@ -381,7 +290,20 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
 
     let apiResult;
     try {
-      apiResult = await callApi(apiKey, model, systemPrompt, input, tools);
+      const turnResult = await llmTurn({
+        provider,
+        apiKey,
+        model,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: input }],
+        tools,
+        maxTokens: 1024,
+        timeoutMs: 30_000
+      });
+      apiResult = {
+        toolsCalled: turnResult.toolCalls.map((tc) => tc.name),
+        responseText: turnResult.text
+      };
     } catch (err) {
       failed++;
       const reason = `API error: ${err.message}`;

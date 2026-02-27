@@ -13,7 +13,7 @@ import blessed from 'blessed';
 import { existsSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { request as httpsRequest } from 'https';
+import { llmTurn, resolveModelConfig, httpsPost } from '../api-client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
@@ -34,82 +34,9 @@ function loadEnv() {
   return out;
 }
 
-function httpsPost(hostname, path, headers, body, timeoutMs = 60_000) {
-  return new Promise((res, rej) => {
-    const payload = JSON.stringify(body);
-    const req = httpsRequest(
-      { hostname, path, method: 'POST', headers: { ...headers, 'Content-Length': Buffer.byteLength(payload) } },
-      (resp) => {
-        let data = '';
-        resp.on('data', (d) => { data += d; });
-        resp.on('end', () => res({ status: resp.statusCode, body: data }));
-      }
-    );
-    req.setTimeout(timeoutMs, () => req.destroy(new Error('API timeout')));
-    req.on('error', rej);
-    req.write(payload);
-    req.end();
-  });
-}
-
-function toAnthropicTool(t) {
-  return { name: t.name, description: t.description || '', input_schema: t.jsonSchema || { type: 'object', properties: {} } };
-}
-
-function toOpenAiTool(t) {
-  return { type: 'function', function: { name: t.name, description: t.description || '', parameters: t.jsonSchema || { type: 'object', properties: {} } } };
-}
-
 // ── Multi-turn API (returns { text, toolCalls: [{name, input}] }) ───────────
 
 const MAX_TOOL_DEPTH = 3;
-
-async function anthropicTurn(key, model, system, messages, tools) {
-  const body = {
-    model,
-    max_tokens: 1024,
-    ...(system ? { system } : {}),
-    messages,
-    ...(tools.length ? { tools: tools.map(toAnthropicTool) } : {})
-  };
-  const raw = await httpsPost('api.anthropic.com', '/v1/messages', {
-    'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01',
-    'x-api-key': key
-  }, body);
-  const data = JSON.parse(raw.body);
-  if (data.error) throw new Error(data.error.message);
-  const toolUseBlocks = (data.content || []).filter((b) => b.type === 'tool_use');
-  const textBlocks    = (data.content || []).filter((b) => b.type === 'text');
-  return {
-    rawContent: data.content || [],
-    text: textBlocks.map((b) => b.text).join('\n'),
-    toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
-    stopReason: data.stop_reason
-  };
-}
-
-async function openaiTurn(key, model, system, messages, tools) {
-  const msgs = system ? [{ role: 'system', content: system }, ...messages] : [...messages];
-  const body = {
-    model,
-    messages: msgs,
-    ...(tools.length ? { tools: tools.map(toOpenAiTool), tool_choice: 'auto' } : {})
-  };
-  const raw = await httpsPost('api.openai.com', '/v1/chat/completions', {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${key}`
-  }, body);
-  const data = JSON.parse(raw.body);
-  if (data.error) throw new Error(data.error.message);
-  const msg = data.choices?.[0]?.message || {};
-  const toolCalls = (msg.tool_calls || []).map((tc) => ({
-    id: tc.id,
-    name: tc.function?.name,
-    input: (() => { try { return JSON.parse(tc.function?.arguments || '{}'); } catch (_) { return {}; } })()
-  }));
-  return { rawMessage: msg, text: msg.content || '', toolCalls, stopReason: msg.finish_reason };
-}
 
 // ── View ───────────────────────────────────────────────────────────────────
 
@@ -257,9 +184,15 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       return;
     }
 
-    const turn = provider === 'anthropic'
-      ? await anthropicTurn(apiKey, model, systemPrompt, apiMessages, tools)
-      : await openaiTurn(apiKey, model, systemPrompt, apiMessages, tools);
+    const turn = await llmTurn({
+      provider,
+      apiKey,
+      model,
+      system: systemPrompt,
+      messages: apiMessages,
+      tools,
+      maxTokens: 1024
+    });
 
     // Show text response (might be a preamble before tool calls)
     if (turn.text) appendAssistant(turn.text);
@@ -282,7 +215,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
         });
       } else {
         // OpenAI: append assistant message with tool_calls, then tool results
-        apiMessages.push({ role: 'assistant', ...turn.rawMessage });
+        apiMessages.push({ role: 'assistant', ...turn.rawContent });
         for (const tc of turn.toolCalls) {
           apiMessages.push({
             role: 'tool',

@@ -98,7 +98,8 @@ export function createView({
   setFooter,
   screenKey,
   openPopup,
-  closePopup
+  closePopup,
+  startService
 }) {
   // ── Root container (fills the content area) ─────────────────────────────
 
@@ -106,6 +107,7 @@ export function createView({
     top: 0, left: 0, width: '100%', height: '100%',
     tags: true
   });
+  root.wantsBackConfirm = true;
 
   // ── Header row ──────────────────────────────────────────────────────────
 
@@ -185,8 +187,6 @@ export function createView({
     style: { bg: 'black', fg: 'white' }
   });
 
-  content.append(root);
-
   // ── State ────────────────────────────────────────────────────────────────
 
   let modelAResult  = null;
@@ -218,7 +218,7 @@ export function createView({
   function showFooterReady() {
     setFooter(
       ' {bold}a{/bold}/{bold}1{/bold} use A  ' +
-      '{bold}b{/bold}/{bold}2{/bold} use B  ' +
+      '{bold}2{/bold} use B  ' +
       '{bold}m{/bold} merge  ' +
       '{bold}Escape{/bold} back'
     );
@@ -278,13 +278,13 @@ export function createView({
   // ── Key bindings ─────────────────────────────────────────────────────────
 
   screenKey(['a', '1'], () => { chooseA(); });
-  screenKey(['b', '2'], () => { chooseB(); });
+  screenKey(['2'],      () => { chooseB(); });
   screenKey(['m'],      () => { chooseMerge(); });
   screenKey(['escape'], () => { navigate('forge'); });
 
   // Also handle scroll between panels with Tab
   screenKey(['tab'], () => {
-    if (panelA.focused) {
+    if (screen.focused === panelA) {
       panelB.focus();
     } else {
       panelA.focus();
@@ -312,7 +312,7 @@ export function createView({
         'Set models.secondary in Settings (option 1 → secondary role).'
       );
       setStatus('{red-fg} No secondary model configured.{/red-fg}');
-      setFooter(' {bold}Escape{/bold} back  {bold}b{/bold} back');
+      setFooter(' {bold}Escape{/bold} back');
       screen.render();
       return;
     }
@@ -385,15 +385,40 @@ export function createView({
     }
 
     // 8. Mark ready and update status/footer
-    ready = !!(modelAResult && modelBResult);
+    const readyA = !!modelAResult;
+    const readyB = !!modelBResult;
+    ready = readyA || readyB;
 
-    if (ready) {
+    if (readyA && readyB) {
       setStatus('{green-fg} Done.{/green-fg}  Pick a result or merge.');
-      showFooterReady();
+      setFooter(
+        ' {bold}a{/bold}/{bold}1{/bold} use A  ' +
+        '{bold}b{/bold}/{bold}2{/bold} use B  ' +
+        '{bold}m{/bold} merge  ' +
+        '{bold}Escape{/bold} back'
+      );
+    } else if (readyA) {
+      const failures = [errorA && 'A', errorB && 'B'].filter(Boolean).join(', ');
+      setStatus(`{yellow-fg} Model(s) failed: ${failures}.  Showing partial results.{/yellow-fg}`);
+      setFooter(
+        ' {bold}a{/bold}/{bold}1{/bold} use A  ' +
+        '{#555555-fg}b/2 use B (unavailable){/#555555-fg}  ' +
+        '{#555555-fg}m merge (unavailable){/#555555-fg}  ' +
+        '{bold}Escape{/bold} back'
+      );
+    } else if (readyB) {
+      const failures = [errorA && 'A', errorB && 'B'].filter(Boolean).join(', ');
+      setStatus(`{yellow-fg} Model(s) failed: ${failures}.  Showing partial results.{/yellow-fg}`);
+      setFooter(
+        '{#555555-fg} a/1 use A (unavailable){/#555555-fg}  ' +
+        '{bold}b{/bold}/{bold}2{/bold} use B  ' +
+        '{#555555-fg}m merge (unavailable){/#555555-fg}  ' +
+        '{bold}Escape{/bold} back'
+      );
     } else {
       const failures = [errorA && 'A', errorB && 'B'].filter(Boolean).join(', ');
       setStatus(`{red-fg} Error in model(s): ${failures}.  Check API keys in Settings.{/red-fg}`);
-      setFooter(' {bold}Escape{/bold} back  {bold}b{/bold} back');
+      setFooter(' {bold}Escape{/bold} back');
     }
 
     panelA.focus();

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS eval_runs (
   total_cases INTEGER DEFAULT 0,
   passed INTEGER DEFAULT 0,
   failed INTEGER DEFAULT 0,
+  skipped INTEGER DEFAULT 0,
   notes TEXT
 );
 
@@ -55,6 +56,12 @@ CREATE TABLE IF NOT EXISTS model_comparisons (
 export function getDb(dbPath) {
   const db = new Database(dbPath);
   db.exec(SCHEMA);
+  // Migrate: add skipped column if it doesn't exist yet
+  try {
+    db.exec('ALTER TABLE eval_runs ADD COLUMN skipped INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message.includes('duplicate column')) throw err;
+  }
   return db;
 }
 
@@ -92,8 +99,8 @@ export function getEvalSummary(db) {
  */
 export function insertEvalRun(db, row) {
   return db.prepare(`
-    INSERT INTO eval_runs (tool_name, run_at, eval_type, total_cases, passed, failed, notes)
-    VALUES (@tool_name, @run_at, @eval_type, @total_cases, @passed, @failed, @notes)
+    INSERT INTO eval_runs (tool_name, run_at, eval_type, total_cases, passed, failed, skipped, notes)
+    VALUES (@tool_name, @run_at, @eval_type, @total_cases, @passed, @failed, @skipped, @notes)
   `).run({
     tool_name: row.tool_name,
     run_at: row.run_at ?? new Date().toISOString(),
@@ -101,6 +108,7 @@ export function insertEvalRun(db, row) {
     total_cases: row.total_cases ?? 0,
     passed: row.passed ?? 0,
     failed: row.failed ?? 0,
+    skipped: row.skipped ?? 0,
     notes: row.notes ?? null
   });
 }

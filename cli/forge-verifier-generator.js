@@ -157,10 +157,9 @@ async function callLlmForVerifier({ modelConfig, prompt, toolName, verifierName,
     }
 
     // Strip markdown fences if the model wrapped the output anyway
-    const stripped = responseText
-      .replace(/^```(?:javascript|js)?\s*/i, '')
-      .replace(/\s*```\s*$/, '')
-      .trim();
+    // Try to extract content from a fenced block anywhere in the response
+    const fenceMatch = responseText.match(/```(?:javascript|js)?\s*\n([\s\S]*?)\n?\s*```/i);
+    const stripped = fenceMatch ? fenceMatch[1].trim() : responseText.trim();
 
     return stripped;
   }

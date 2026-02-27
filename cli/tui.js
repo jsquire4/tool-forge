@@ -173,11 +173,12 @@ export async function runTui(config) {
 
   // ── Global key bindings (persist for the entire session) ──────────────────
   screen.key(['q', 'C-c'], () => {
-    cleanup(false);
+    cleanup();
   });
 
   screen.key(['b', 'escape'], () => {
     if (popupDepth > 0) return; // a popup is open — let it handle the key
+    if (currentView?.wantsBackConfirm) return; // let view handle it via screenKey
     if (currentViewName !== 'main-menu') navigate('main-menu');
   });
 

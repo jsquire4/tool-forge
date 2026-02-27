@@ -251,22 +251,33 @@ function extractJson(text) {
  * @param {string|null} userInput     - New user message, or null to skip
  * @param {string} systemPrompt       - Phase system prompt
  * @param {object} modelConfig        - { provider, apiKey, model }
+ * @param {string|null} [retryHint]   - If set, appended to system prompt to guide correction
  * @returns {Promise<{ assistantText: string, newMessages: object[] }>}
  */
-async function callLlm(messages, userInput, systemPrompt, modelConfig) {
+async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint = null) {
   const newMessages = [...messages];
 
   if (userInput !== null && userInput !== undefined) {
     newMessages.push({ role: 'user', content: userInput });
   }
 
-  const result = await llmTurn({
-    provider: modelConfig.provider,
-    apiKey:   modelConfig.apiKey,
-    model:    modelConfig.model,
-    system:   systemPrompt,
-    messages: newMessages
-  });
+  const fullSystem = retryHint
+    ? systemPrompt + '\n\nPrevious attempt failed: ' + retryHint + '\nPlease correct the JSON.'
+    : systemPrompt;
+
+  let result;
+  try {
+    result = await llmTurn({
+      provider:  modelConfig.provider,
+      apiKey:    modelConfig.apiKey,
+      model:     modelConfig.model,
+      system:    fullSystem,
+      messages:  newMessages,
+      maxTokens: 4096
+    });
+  } catch (err) {
+    throw new Error(`LLM call failed (${modelConfig.provider}/${modelConfig.model}): ${err.message}`);
+  }
 
   const assistantText = result.text || '';
   newMessages.push({ role: 'assistant', content: assistantText });
@@ -350,7 +361,8 @@ async function handleJsonPhase({
     state.messages,
     userInput,
     systemPrompt,
-    modelConfig
+    modelConfig,
+    state.lastValidationError || null
   );
 
   const extracted = extractJson(assistantText);
@@ -358,18 +370,14 @@ async function handleJsonPhase({
   if (!extracted) {
     // No JSON found — ask again if retries remain.
     if (state.retryCount < 3) {
-      const retryMsg = 'I could not find a JSON block in your response. Please include a JSON object with the required fields, wrapped in ```json ... ``` fences.';
-      const retryMessages = [
-        ...newMessages,
-        { role: 'user', content: retryMsg }
-      ];
+      const retryHint = 'I could not find a JSON block in your response. Please include a JSON object with the required fields, wrapped in ```json ... ``` fences.';
       return {
         nextState: {
           ...state,
           phase: state.phase,
-          messages: retryMessages,
+          messages: newMessages,
           retryCount: state.retryCount + 1,
-          lastValidationError: retryMsg
+          lastValidationError: retryHint
         },
         assistantText,
         specUpdate: null,
@@ -385,7 +393,7 @@ async function handleJsonPhase({
         phase: state.phase,
         messages: newMessages,
         retryCount: 0,
-        lastValidationError: 'Could not extract JSON after 3 attempts. Please try rephrasing.'
+        lastValidationError: null
       },
       assistantText: assistantText + '\n\n(Could not extract JSON after 3 attempts. Please try rephrasing your requirements.)',
       specUpdate: null,
@@ -398,18 +406,14 @@ async function handleJsonPhase({
 
   if (!valid) {
     if (state.retryCount < 3) {
-      const retryMsg = `The JSON was found but failed validation: ${error} Please correct and try again.`;
-      const retryMessages = [
-        ...newMessages,
-        { role: 'user', content: retryMsg }
-      ];
+      const retryHint = `The JSON was found but failed validation: ${error}`;
       return {
         nextState: {
           ...state,
           phase: state.phase,
-          messages: retryMessages,
+          messages: newMessages,
           retryCount: state.retryCount + 1,
-          lastValidationError: retryMsg
+          lastValidationError: retryHint
         },
         assistantText,
         specUpdate: null,
@@ -424,7 +428,7 @@ async function handleJsonPhase({
         phase: state.phase,
         messages: newMessages,
         retryCount: 0,
-        lastValidationError: error
+        lastValidationError: null
       },
       assistantText: assistantText + `\n\n(Validation failed after 3 attempts: ${error})`,
       specUpdate: null,
@@ -528,29 +532,22 @@ async function handleConfirm({ state, userInput, modelConfig }) {
   };
 }
 
-async function handleAutoAdvance({ state, systemPrompt, modelConfig, actions, nextPhase }) {
-  const confirmMsg = 'Proceeding automatically.';
-  const { assistantText, newMessages } = await callLlm(
-    state.messages,
-    confirmMsg,
-    systemPrompt,
-    modelConfig
-  );
-
+function handleAutoAdvance({ state, assistantMessage, actions, nextPhase }) {
   return {
     nextState: {
       ...state,
       phase: nextPhase,
-      messages: newMessages
+      retryCount: 0,
+      lastValidationError: null
     },
-    assistantText,
+    assistantText: assistantMessage,
     specUpdate: null,
     actions,
     phaseChanged: true
   };
 }
 
-async function handleGenerate({ state, modelConfig, projectRoot }) {
+function handleGenerate({ state, projectRoot }) {
   // Derive expected file paths from the spec name.
   const toolName = state.spec.name || 'unnamed_tool';
   const toolPath = projectRoot
@@ -569,14 +566,13 @@ async function handleGenerate({ state, modelConfig, projectRoot }) {
 
   return handleAutoAdvance({
     state,
-    systemPrompt: SYSTEM_PROMPTS.generate,
-    modelConfig,
+    assistantMessage: `Generating tool files for ${toolName}…`,
     actions,
     nextPhase: 'test'
   });
 }
 
-async function handleTest({ state, modelConfig }) {
+function handleTest({ state }) {
   const toolName = state.spec.name || 'unnamed_tool';
   const actions = [
     {
@@ -587,28 +583,25 @@ async function handleTest({ state, modelConfig }) {
 
   return handleAutoAdvance({
     state,
-    systemPrompt: SYSTEM_PROMPTS.test,
-    modelConfig,
+    assistantMessage: 'Running tests…',
     actions,
     nextPhase: 'evals'
   });
 }
 
-async function handleEvals({ state, modelConfig }) {
+function handleEvals({ state }) {
   return handleAutoAdvance({
     state,
-    systemPrompt: SYSTEM_PROMPTS.evals,
-    modelConfig,
+    assistantMessage: 'Generating eval cases…',
     actions: [{ type: 'write_evals' }],
     nextPhase: 'verifiers'
   });
 }
 
-async function handleVerifiers({ state, modelConfig }) {
+function handleVerifiers({ state }) {
   return handleAutoAdvance({
     state,
-    systemPrompt: SYSTEM_PROMPTS.verifiers,
-    modelConfig,
+    assistantMessage: 'Generating verifier stubs…',
     actions: [{ type: 'write_verifiers' }],
     nextPhase: 'done'
   });
@@ -674,16 +667,16 @@ export async function forgeStep({
       return handleConfirm({ state, userInput, modelConfig });
 
     case 'generate':
-      return handleGenerate({ state, modelConfig, projectRoot });
+      return handleGenerate({ state, projectRoot });
 
     case 'test':
-      return handleTest({ state, modelConfig });
+      return handleTest({ state });
 
     case 'evals':
-      return handleEvals({ state, modelConfig });
+      return handleEvals({ state });
 
     case 'verifiers':
-      return handleVerifiers({ state, modelConfig });
+      return handleVerifiers({ state });
 
     case 'done':
       return handleDone({ state });

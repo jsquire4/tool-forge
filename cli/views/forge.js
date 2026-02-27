@@ -31,6 +31,7 @@ export function createView({
   screenKey, openPopup, closePopup, startService
 }) {
   const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
+  container.wantsBackConfirm = true;
 
   const phaseBar = blessed.box({
     parent: container, top: 0, left: 0, width: '100%', height: 1,
@@ -292,7 +293,7 @@ export function createView({
 
     try {
       const dbMod = await import('../db.js');
-      db = dbMod.getDb(resolve(PROJECT_ROOT, 'forge.db'));
+      db = dbMod.getDb(resolve(process.cwd(), config?.dbPath || 'forge.db'));
       updateToolGenerationFn = dbMod.updateToolGeneration;
       forgeState.generationId = dbMod.insertToolGeneration(db, {
         tool_name: 'new_tool',
@@ -305,7 +306,14 @@ export function createView({
       const t = config._forgeTarget;
       forgeState.spec = { ...forgeState.spec, ...t.spec };
       forgeState.phase = 'confirm';
-      appendSystem(`Re-forging: ${t.spec?.name || t.name || '(unknown)'}`);
+      appendSystem(`Re-forging: ${t.spec?.name || t.toolName || '(unknown)'}`);
+    }
+
+    // If returning from model-compare with a chosen spec, apply it
+    if (config._chosenSpec) {
+      forgeState = { ...forgeState, spec: { ...forgeState.spec, ...config._chosenSpec } };
+      config._chosenSpec = null; // consume it
+      appendSystem('Applied spec from model comparison.');
     }
 
     updatePhaseBar();
@@ -346,7 +354,11 @@ export function createView({
     doStep('skip');
   });
 
-  screenKey('m', () => navigate('model-compare'));
+  screenKey('m', () => {
+    config._forgeState = forgeState;
+    config._forgeInput = null;
+    navigate('model-compare');
+  });
 
   screenKey('b', () => {
     if (forgeState.phase === 'explore' || forgeState.phase === 'done') {

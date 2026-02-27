@@ -13,7 +13,7 @@ import blessed from 'blessed';
 import { existsSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { llmTurn, resolveModelConfig, httpsPost } from '../api-client.js';
+import { llmTurn } from '../api-client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');

@@ -189,7 +189,7 @@ async function generateEvalsForTool(tool, config, screen, setStatus, openPopup, 
   try {
     const { existsSync, readFileSync } = await import('fs');
     const { resolve } = await import('path');
-    const { llmTurn, resolveModelConfig } = await import('../api-client.js');
+    const { resolveModelConfig } = await import('../api-client.js');
     const { generateEvals } = await import('../forge-eval-generator.js');
 
     // Load env

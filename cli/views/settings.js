@@ -258,8 +258,10 @@ function showModelSelector(screen, config, openPopup, closePopup, role = 'genera
     const val = values[idx];
     if (val === null) return; // divider row — skip
     if (val === '__custom__') {
+      closePopup?.();      // close the model list popup
       popup.destroy();
       screen.render();
+      openPopup?.();       // open for the new text prompt
       const prompt = blessed.prompt({
         parent: screen,
         border: 'line',
@@ -272,6 +274,7 @@ function showModelSelector(screen, config, openPopup, closePopup, role = 'genera
         keys: true
       });
       prompt.input('Enter model ID (e.g. gpt-4o, gemini-2.0-flash):', current, (err, val) => {
+        closePopup?.();    // close the text prompt
         if (!err && val && val.trim()) {
           cfg.models = cfg.models || {};
           cfg.models[role] = val.trim();
@@ -291,6 +294,7 @@ function showModelSelector(screen, config, openPopup, closePopup, role = 'genera
     config.models[role] = val;
     // Backwards compat: also update config.model for generation role
     if (role === 'generation') config.model = val;
+    closePopup?.();
     popup.destroy();
     screen.render();
   }

@@ -266,7 +266,12 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
   const allCases = [];
   for (const file of evalFiles) {
     const type = file.includes('.golden.') ? 'golden' : 'labeled';
-    const cases = JSON.parse(readFileSync(file, 'utf-8'));
+    let cases;
+    try {
+      cases = JSON.parse(readFileSync(file, 'utf-8'));
+    } catch (err) {
+      throw new Error(`Failed to parse eval file ${file}: ${err.message}`);
+    }
     for (const c of cases) allCases.push({ ...c, _evalType: type });
   }
 

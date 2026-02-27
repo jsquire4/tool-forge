@@ -212,7 +212,7 @@ async function _openaiTurn({ apiKey, model, system, messages, tools, maxTokens, 
     text:       msg.content || '',
     toolCalls,
     rawContent: msg,
-    stopReason: msg.finish_reason ?? null,
+    stopReason: data.choices?.[0]?.finish_reason ?? null,
     usage:      data.usage ?? null
   };
 }

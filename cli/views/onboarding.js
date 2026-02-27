@@ -289,9 +289,14 @@ export function createView({ screen, content, config, navigate, setFooter, scree
           const cfg = loadConfig();
           cfg.project = cfg.project || {};
           cfg.project.toolsDir = trimmed;
-          saveConfig(cfg);
-          config.project = config.project || {};
-          config.project.toolsDir = trimmed;
+          try {
+            saveConfig(cfg);
+            config.project = config.project || {};
+            config.project.toolsDir = trimmed;
+          } catch (err) {
+            statusBar?.setContent?.(`{red-fg}⚠ Could not save config: ${err.message}{/red-fg}`);
+            screen.render();
+          }
         }
 
         renderList();
@@ -348,9 +353,14 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       const cfg = loadConfig();
       cfg.models = cfg.models || {};
       cfg.models.generation = selected;
-      saveConfig(cfg);
-      config.models = config.models || {};
-      config.models.generation = selected;
+      try {
+        saveConfig(cfg);
+        config.models = config.models || {};
+        config.models.generation = selected;
+      } catch (err) {
+        statusBar?.setContent?.(`{red-fg}⚠ Could not save config: ${err.message}{/red-fg}`);
+        screen.render();
+      }
 
       closePopup?.();
       popup.destroy();
@@ -409,7 +419,13 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (chosen.toolsDir) merged.project.toolsDir = chosen.toolsDir;
     if (chosen.model)    merged.models.generation = chosen.model;
 
-    saveConfig(merged);
+    try {
+      saveConfig(merged);
+    } catch (err) {
+      statusBar?.setContent?.(`{red-fg}⚠ Could not save config: ${err.message}{/red-fg}`);
+      screen.render();
+      return;
+    }
 
     // Reload config in-place
     Object.assign(config, merged);

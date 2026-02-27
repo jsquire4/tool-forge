@@ -154,8 +154,8 @@ export function createView({
     }
 
     popup.key('y', async () => {
-      closePreview();
       previewPending = false;
+      closePreview();
       try {
         if (files.toolFile) {
           mkdirSync(dirname(files.toolFile.path), { recursive: true });
@@ -184,8 +184,8 @@ export function createView({
     });
 
     popup.key('n', () => {
-      closePreview();
       previewPending = false;
+      closePreview();
       appendSystem("File write aborted. Describe changes and I'll regenerate.");
     });
 
@@ -208,7 +208,7 @@ export function createView({
       });
     });
 
-    popup.key(['escape', 'b'], () => { closePreview(); previewPending = false; appendSystem('File preview closed.'); });
+    popup.key(['escape', 'b'], () => { previewPending = false; closePreview(); appendSystem('File preview closed.'); });
   }
 
   // ── Action handler ─────────────────────────────────────────────────────
@@ -364,11 +364,13 @@ export function createView({
   screenKey('s', () => {
     if (screen.focused === inputBox) return;
     if (busy) return;
+    if (previewPending) return;
     doStep('skip');
   });
 
   screenKey('m', () => {
     if (busy) return;
+    if (previewPending) return;
     config._forgeState = forgeState;
     config._forgeInput = null;
     navigate('model-compare');

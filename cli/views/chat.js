@@ -232,8 +232,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
         apiMessages.push({ role: 'assistant', content: turn.rawContent });
       } else {
         if (turn.text) {
-        apiMessages.push({ role: 'assistant', content: turn.text });
-      }
+          apiMessages.push({ role: 'assistant', content: turn.text });
+        }
       }
     }
   }

@@ -58,7 +58,8 @@ export function createInitialState() {
     messages: [],
     retryCount: 0,
     lastValidationError: null,
-    generationId: null
+    generationId: null,
+    phaseStartIdx: 0
   };
 }
 
@@ -259,9 +260,16 @@ async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint
 
   if (userInput !== null && userInput !== undefined) {
     newMessages.push({ role: 'user', content: userInput });
-  } else if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-    newMessages.push({ role: 'user', content: '[continue]' });
   }
+
+  // Build the API payload separately — add a synthetic [continue] turn only for
+  // the API call when the last stored message is from the assistant and there is
+  // no new user input.  The synthetic turn is NOT stored back into state.
+  const apiMessages = (
+    newMessages.length > 0 &&
+    newMessages[newMessages.length - 1].role === 'assistant' &&
+    (userInput === null || userInput === undefined)
+  ) ? [...newMessages, { role: 'user', content: '[continue]' }] : newMessages;
 
   const fullSystem = retryHint
     ? systemPrompt + '\n\nPrevious attempt failed: ' + retryHint + '\nPlease correct the JSON.'
@@ -274,7 +282,7 @@ async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint
       apiKey:    modelConfig.apiKey,
       model:     modelConfig.model,
       system:    fullSystem,
-      messages:  newMessages,
+      messages:  apiMessages,
       maxTokens: 4096
     });
   } catch (err) {
@@ -312,7 +320,8 @@ async function handleExplore({ state, userInput, modelConfig }) {
     nextState: {
       ...state,
       phase: nextPhase,
-      messages: newMessages
+      messages: newMessages,
+      phaseStartIdx: advance ? newMessages.length : (state.phaseStartIdx || 0)
     },
     assistantText,
     specUpdate: null,
@@ -332,11 +341,11 @@ async function handleSkeptic({ state, userInput, modelConfig, existingTools }) {
     modelConfig
   );
 
-  // Advance after the user has replied to the skeptic challenge.
-  // Require at least 2 user messages total (one from explore, one from skeptic)
-  // so we don't advance on the first user reply when entering skeptic.
-  const prevUserMessages = state.messages.filter((m) => m.role === 'user');
-  const advance = prevUserMessages.length >= 2 && userInput !== null;
+  // Advance after the user has replied to the skeptic challenge at least once.
+  // Count only user messages sent since this phase started (phaseStartIdx).
+  const phaseStart = state.phaseStartIdx || 0;
+  const userMsgsInPhase = state.messages.slice(phaseStart).filter((m) => m.role === 'user');
+  const advance = userMsgsInPhase.length >= 1 && userInput !== null;
 
   const nextPhase = advance ? 'description' : 'skeptic';
 
@@ -362,9 +371,13 @@ async function handleJsonPhase({
   applySpec,
   nextPhase
 }) {
-  const retryHint = userInput !== null ? null : (state.lastValidationError || null);
+  const effectiveState = userInput !== null
+    ? { ...state, retryCount: 0, lastValidationError: null }
+    : state;
+
+  const retryHint = userInput !== null ? null : (effectiveState.lastValidationError || null);
   const { assistantText, newMessages } = await callLlm(
-    state.messages,
+    effectiveState.messages,
     userInput,
     systemPrompt,
     modelConfig,
@@ -375,15 +388,15 @@ async function handleJsonPhase({
 
   if (!extracted) {
     // No JSON found — ask again if retries remain.
-    if (state.retryCount < 3) {
-      const retryHint = 'I could not find a JSON block in your response. Please include a JSON object with the required fields, wrapped in ```json ... ``` fences.';
+    if (effectiveState.retryCount < 3) {
+      const newRetryHint = 'I could not find a JSON block in your response. Please include a JSON object with the required fields, wrapped in ```json ... ``` fences.';
       return {
         nextState: {
-          ...state,
-          phase: state.phase,
+          ...effectiveState,
+          phase: effectiveState.phase,
           messages: newMessages,
-          retryCount: state.retryCount + 1,
-          lastValidationError: retryHint
+          retryCount: effectiveState.retryCount + 1,
+          lastValidationError: newRetryHint
         },
         assistantText,
         specUpdate: null,
@@ -395,16 +408,16 @@ async function handleJsonPhase({
     // Too many retries — surface to user, reset retry counter.
     const exhaustedText = assistantText + '\n\n(Could not extract JSON after 3 attempts — please rephrase or simplify your request.)';
     const updatedMessages = [...newMessages];
-    for (let i = updatedMessages.length - 1; i >= 0; i--) {
-      if (updatedMessages[i].role === 'assistant') {
-        updatedMessages[i] = { ...updatedMessages[i], content: exhaustedText };
-        break;
-      }
+    const lastMsgMissing = updatedMessages[updatedMessages.length - 1];
+    if (lastMsgMissing && lastMsgMissing.role === 'assistant') {
+      updatedMessages[updatedMessages.length - 1] = { ...lastMsgMissing, content: exhaustedText };
+    } else {
+      updatedMessages.push({ role: 'assistant', content: exhaustedText });
     }
     return {
       nextState: {
-        ...state,
-        phase: state.phase,
+        ...effectiveState,
+        phase: effectiveState.phase,
         messages: updatedMessages,
         retryCount: 0,
         lastValidationError: null
@@ -419,15 +432,15 @@ async function handleJsonPhase({
   const { valid, error } = validator(extracted);
 
   if (!valid) {
-    if (state.retryCount < 3) {
-      const retryHint = `The JSON was found but failed validation: ${error}`;
+    if (effectiveState.retryCount < 3) {
+      const newRetryHint = `The JSON was found but failed validation: ${error}`;
       return {
         nextState: {
-          ...state,
-          phase: state.phase,
+          ...effectiveState,
+          phase: effectiveState.phase,
           messages: newMessages,
-          retryCount: state.retryCount + 1,
-          lastValidationError: retryHint
+          retryCount: effectiveState.retryCount + 1,
+          lastValidationError: newRetryHint
         },
         assistantText,
         specUpdate: null,
@@ -438,16 +451,16 @@ async function handleJsonPhase({
 
     const validationExhaustedText = assistantText + `\n\n(Validation failed after 3 attempts: ${error} — please rephrase or simplify your request.)`;
     const updatedValidationMessages = [...newMessages];
-    for (let i = updatedValidationMessages.length - 1; i >= 0; i--) {
-      if (updatedValidationMessages[i].role === 'assistant') {
-        updatedValidationMessages[i] = { ...updatedValidationMessages[i], content: validationExhaustedText };
-        break;
-      }
+    const lastMsgValidation = updatedValidationMessages[updatedValidationMessages.length - 1];
+    if (lastMsgValidation && lastMsgValidation.role === 'assistant') {
+      updatedValidationMessages[updatedValidationMessages.length - 1] = { ...lastMsgValidation, content: validationExhaustedText };
+    } else {
+      updatedValidationMessages.push({ role: 'assistant', content: validationExhaustedText });
     }
     return {
       nextState: {
-        ...state,
-        phase: state.phase,
+        ...effectiveState,
+        phase: effectiveState.phase,
         messages: updatedValidationMessages,
         retryCount: 0,
         lastValidationError: null
@@ -463,9 +476,9 @@ async function handleJsonPhase({
   const specUpdate = applySpec(extracted);
   return {
     nextState: {
-      ...state,
+      ...effectiveState,
       phase: nextPhase,
-      spec: { ...state.spec, ...specUpdate },
+      spec: { ...effectiveState.spec, ...specUpdate },
       messages: newMessages,
       retryCount: 0,
       lastValidationError: null

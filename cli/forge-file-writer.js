@@ -98,6 +98,7 @@ function validateLlmOutput(obj) {
  * @returns {string}
  */
 function buildSystemPrompt(spec, existingTools) {
+  const safeName       = (spec.name || 'unnamed').replace(/[^a-zA-Z0-9_-]/g, '_');
   const tagsStr        = spec.tags?.join(', ')          || '';
   const dependsOnStr   = spec.dependsOn?.join(', ')     || '';
   const triggersStr    = spec.triggerPhrases?.join(', ') || '';
@@ -161,7 +162,7 @@ export const ${_camelName(spec.name)}Tool = {
 The test file must be a JavaScript ESM module using describe/it/expect (Jest or Vitest style).
 It tests the exported tool object — NOT the execute() implementation.
 
-import { ${_camelName(spec.name)}Tool } from '../${spec.name}.tool.js';
+import { ${_camelName(spec.name)}Tool } from '../${safeName}.tool.js';
 
 describe('${spec.name}', () => {
   it('has required fields', () => {
@@ -181,7 +182,7 @@ describe('${spec.name}', () => {
 
 --- BARREL LINE FORMAT ---
 The barrelLine must be a single ESM named re-export, e.g.:
-export { ${_camelName(spec.name)}Tool } from './${spec.name}.tool.js';
+export { ${_camelName(spec.name)}Tool } from './${safeName}.tool.js';
 
 --- RESPONSE FORMAT ---
 Respond ONLY with a JSON object — no prose, no markdown outside the JSON itself.

@@ -297,9 +297,6 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
         if (!err && val !== null && val !== undefined) {
           const trimmed = val.trim() || DEFAULT_TOOLS_DIR;
-          chosen.toolsDir = trimmed;
-          completed[1] = true;
-
           const cfg = loadConfig();
           cfg.project = cfg.project || {};
           cfg.project.toolsDir = trimmed;
@@ -307,6 +304,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
             saveConfig(cfg);
             config.project = config.project || {};
             config.project.toolsDir = trimmed;
+            chosen.toolsDir = trimmed;    // only set if save succeeds
+            completed[1] = true;           // only set if save succeeds
           } catch (err) {
             statusBar?.setContent?.(`{red-fg}⚠ Could not save config: ${err.message}{/red-fg}`);
             screen.render();
@@ -361,9 +360,6 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       const selected = ONBOARDING_MODELS[idx];
       if (!selected) return;
 
-      chosen.model = selected;
-      completed[2] = true;
-
       const cfg = loadConfig();
       cfg.models = cfg.models || {};
       cfg.models.generation = selected;
@@ -371,6 +367,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
         saveConfig(cfg);
         config.models = config.models || {};
         config.models.generation = selected;
+        chosen.model = selected;    // only set if save succeeds
+        completed[2] = true;         // only set if save succeeds
       } catch (err) {
         statusBar?.setContent?.(`{red-fg}⚠ Could not save config: ${err.message}{/red-fg}`);
         screen.render();
@@ -384,14 +382,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     }
 
     modelList.on('select', (item, idx) => applyModel(idx));
-    modelList.key(['escape'], () => {
-      closePopup?.();
-      popup.destroy();
-      renderList();
-      list.focus();
-      screen.render();
-    });
-    popup.key('b', () => {
+    modelList.key(['escape', 'b'], () => {   // CORRECT - both on focused widget
       closePopup?.();
       popup.destroy();
       renderList();

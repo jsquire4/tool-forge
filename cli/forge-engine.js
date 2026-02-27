@@ -14,6 +14,7 @@ export const PHASES = [
   'skeptic',
   'description',
   'fields',
+  'routing',
   'deps',
   'confirm',
   'generate',
@@ -53,13 +54,20 @@ export function createInitialState() {
       timeout: null,
       tags: [],
       dependsOn: [],
-      triggerPhrases: []
+      triggerPhrases: [],
+      endpointTarget: null,
+      httpMethod: null,
+      authType: null,
+      paramMap: {},
+      evalMix: null
     },
     messages: [],
     retryCount: 0,
     lastValidationError: null,
     generationId: null,
-    phaseStartIdx: 0
+    phaseStartIdx: 0,
+    skepticOverlaps: [],
+    skepticOverlapSurfaced: false
   };
 }
 
@@ -69,14 +77,17 @@ const SYSTEM_PROMPTS = {
   explore:
     "You are a tool forge assistant helping design a new LLM agent tool. Ask the user what they want to build. Be curious and open. Try to understand the use case, the trigger phrase ('user says X'), and what the tool should do. Keep your response under 100 words.",
 
-  skeptic:
-    "You are reviewing whether a new tool is necessary. Here are the existing tools: {existingTools}. Challenge the user: does this overlap with any existing tool? Could it be a parameter variation instead? Only proceed if the tool is genuinely distinct. Ask pointed questions.",
+  skepticV2:
+    "You are reviewing whether a new tool is necessary. Here are the existing tools with their descriptions and trigger phrases:\n\n{existingTools}\n\nCheck if the proposed tool overlaps semantically with any existing tool. Look for overlapping descriptions (similar intent or scope) and overlapping trigger phrases (a user might say the same thing to trigger both tools).\n\nFor each overlap found, output EXACTLY this format on its own line:\nOVERLAP FOUND: [tool_name] — [reason]\n\nIf no overlaps are found, output EXACTLY:\nNO_OVERLAP\n\nThen challenge the user: does this need to be a separate tool, or can it be a parameter variation? Be pointed.",
 
   description:
     "You are locking the description contract for a tool. The format MUST be: '<What the tool does>. Use when <trigger phrase>. <Disambiguation from similar tools if any>.' Extract: name (snake_case), description (this format), triggerPhrases (3+ variations a user might say to trigger this). Respond with JSON: { name, description, triggerPhrases }. Then ask the user to confirm.",
 
   fields:
     "Extract the tool's schema fields, category, consequence level, and confirmation requirement. Respond with JSON: { schema: { <fieldName>: { type, description, optional? } }, category: 'read'|'write'|'delete'|'side_effect', consequenceLevel: 'low'|'medium'|'high', requiresConfirmation: boolean }. Then show a summary.",
+
+  routing:
+    "This tool generates an MCP routing layer pointing to a real API endpoint. Collect: endpointTarget (URL string), httpMethod (GET|POST|PUT|DELETE|PATCH), authType (bearer|apiKey|none), and paramMap (object mapping schema field names to API parameter names — can be empty if names match). Respond with JSON: { endpointTarget, httpMethod, authType, paramMap }. Ask the user for these values if unclear.",
 
   deps:
     "Optionally collect tags and dependencies. Ask if this tool depends on any other tools. Respond with JSON: { tags: [], dependsOn: [] }. This phase can be skipped.",
@@ -90,8 +101,8 @@ const SYSTEM_PROMPTS = {
   test:
     "Auto-advance — no user input needed. Emit the run_tests action.",
 
-  evals:
-    "Auto-advance — no user input needed. Emit the write_evals action.",
+  evalsInteractive:
+    "We're about to generate eval cases for this tool. The default eval mix is: 10 golden cases + 10 labeled cases (3 straightforward, 3 ambiguous, 2 edge, 2 adversarial). Would you like to use the default mix, or customize the counts? If customizing, respond with JSON: { evalMix: { golden: { total: N }, labeled: { straightforward: N, ambiguous: N, edge: N, adversarial: N } } }. If using the default, just say 'default'.",
 
   verifiers:
     "Auto-advance — no user input needed. Emit the write_verifiers action.",
@@ -182,6 +193,97 @@ function validateFields(json) {
   }
 
   return { valid: true, error: null };
+}
+
+/**
+ * Validate JSON extracted from the routing phase.
+ *
+ * @param {object} json
+ * @returns {{ valid: boolean, error: string|null }}
+ */
+function validateRouting(json) {
+  if (!json || typeof json !== 'object') {
+    return { valid: false, error: 'Response must be a JSON object.' };
+  }
+
+  const { endpointTarget, httpMethod, authType, paramMap } = json;
+
+  if (typeof endpointTarget !== 'string' || endpointTarget.trim() === '') {
+    return { valid: false, error: 'endpointTarget must be a non-empty string URL.' };
+  }
+
+  const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'];
+  if (!validMethods.includes(httpMethod)) {
+    return { valid: false, error: `httpMethod must be one of: ${validMethods.join(', ')}.` };
+  }
+
+  const validAuthTypes = ['bearer', 'apiKey', 'none'];
+  if (!validAuthTypes.includes(authType)) {
+    return { valid: false, error: `authType must be one of: ${validAuthTypes.join(', ')}.` };
+  }
+
+  if (!paramMap || typeof paramMap !== 'object' || Array.isArray(paramMap)) {
+    return { valid: false, error: 'paramMap must be an object (can be empty {}).' };
+  }
+
+  return { valid: true, error: null };
+}
+
+/**
+ * Validate JSON extracted from the evals interactive phase.
+ *
+ * @param {object} json
+ * @returns {{ valid: boolean, error: string|null }}
+ */
+function validateEvalMix(json) {
+  if (!json || typeof json !== 'object') {
+    return { valid: false, error: 'Response must be a JSON object.' };
+  }
+
+  const { evalMix } = json;
+  if (!evalMix || typeof evalMix !== 'object') {
+    return { valid: false, error: 'evalMix must be an object.' };
+  }
+
+  if (!evalMix.golden || typeof evalMix.golden.total !== 'number') {
+    return { valid: false, error: 'evalMix.golden.total must be a number.' };
+  }
+
+  if (!evalMix.labeled || typeof evalMix.labeled !== 'object') {
+    return { valid: false, error: 'evalMix.labeled must be an object.' };
+  }
+
+  return { valid: true, error: null };
+}
+
+/**
+ * Parse the skeptic phase LLM response to find overlap findings.
+ *
+ * @param {string} text
+ * @returns {{ overlaps: string[], clear: boolean|null }}
+ */
+function parseSkepticResult(text) {
+  if (!text) return { overlaps: [], clear: null };
+
+  // Check OVERLAP FOUND lines first — they take priority over the NO_OVERLAP sentinel.
+  // If both appear (malformed LLM output), the overlap wins.
+  const overlapLines = [];
+  const overlapRegex = /^OVERLAP FOUND:\s*(.+)$/gm;
+  let match;
+  while ((match = overlapRegex.exec(text)) !== null) {
+    overlapLines.push(match[1].trim());
+  }
+
+  if (overlapLines.length > 0) {
+    return { overlaps: overlapLines, clear: false };
+  }
+
+  if (text.includes('NO_OVERLAP')) {
+    return { overlaps: [], clear: true };
+  }
+
+  // LLM didn't follow the format — treat as unclear
+  return { overlaps: [], clear: null };
 }
 
 /**
@@ -331,8 +433,22 @@ async function handleExplore({ state, userInput, modelConfig }) {
 }
 
 async function handleSkeptic({ state, userInput, modelConfig, existingTools }) {
-  const toolList = Array.isArray(existingTools) ? existingTools.join(', ') : '';
-  const systemPrompt = SYSTEM_PROMPTS.skeptic.replace('{existingTools}', toolList || '(none)');
+  // Build the tool listing — accept both { name, description, triggerPhrases }[] and legacy string[]
+  let toolListing = '(none)';
+  if (Array.isArray(existingTools) && existingTools.length > 0) {
+    if (typeof existingTools[0] === 'string') {
+      toolListing = existingTools.join(', ');
+    } else {
+      toolListing = existingTools.map((t) => {
+        const triggers = Array.isArray(t.triggerPhrases) && t.triggerPhrases.length
+          ? `  Triggers: ${t.triggerPhrases.join(', ')}`
+          : '';
+        return `${t.name}: ${t.description || '(no description)'}${triggers ? '\n' + triggers : ''}`;
+      }).join('\n\n');
+    }
+  }
+
+  const systemPrompt = SYSTEM_PROMPTS.skepticV2.replace('{existingTools}', toolListing);
 
   const { assistantText, newMessages } = await callLlm(
     state.messages,
@@ -341,8 +457,45 @@ async function handleSkeptic({ state, userInput, modelConfig, existingTools }) {
     modelConfig
   );
 
-  // Advance after the user has replied to the skeptic challenge at least once.
-  // Count only user messages sent since this phase started (phaseStartIdx).
+  const { overlaps, clear } = parseSkepticResult(assistantText);
+
+  // If overlaps found and not yet surfaced — block and mark surfaced
+  if (overlaps.length > 0 && !state.skepticOverlapSurfaced) {
+    return {
+      nextState: {
+        ...state,
+        phase: 'skeptic',
+        messages: newMessages,
+        skepticOverlaps: overlaps,
+        skepticOverlapSurfaced: true
+      },
+      assistantText,
+      specUpdate: null,
+      actions: [],
+      phaseChanged: false
+    };
+  }
+
+  // If overlaps were surfaced, advance after user has replied
+  if (state.skepticOverlapSurfaced && userInput !== null) {
+    return {
+      nextState: {
+        ...state,
+        phase: 'description',
+        messages: newMessages,
+        skepticOverlaps: state.skepticOverlaps,
+        skepticOverlapSurfaced: state.skepticOverlapSurfaced
+      },
+      assistantText,
+      specUpdate: null,
+      actions: [],
+      phaseChanged: true
+    };
+  }
+
+  // No overlaps — always require the user to reply after seeing the skeptic's response.
+  // Never auto-advance on the first skeptic call, even when clear === true, so the LLM's
+  // response is shown before the phase transitions.
   const phaseStart = state.phaseStartIdx || 0;
   const userMsgsInPhase = state.messages.slice(phaseStart).filter((m) => m.role === 'user');
   const advance = userMsgsInPhase.length >= 1 && userInput !== null;
@@ -519,6 +672,23 @@ async function handleFields({ state, userInput, modelConfig }) {
       consequenceLevel: json.consequenceLevel,
       requiresConfirmation: json.requiresConfirmation
     }),
+    nextPhase: 'routing'
+  });
+}
+
+async function handleRouting({ state, userInput, modelConfig }) {
+  return handleJsonPhase({
+    state,
+    userInput,
+    modelConfig,
+    systemPrompt: SYSTEM_PROMPTS.routing,
+    validator: validateRouting,
+    applySpec: (json) => ({
+      endpointTarget: json.endpointTarget,
+      httpMethod: json.httpMethod,
+      authType: json.authType,
+      paramMap: json.paramMap || {}
+    }),
     nextPhase: 'deps'
   });
 }
@@ -624,13 +794,52 @@ function handleTest({ state }) {
   });
 }
 
-function handleEvals({ state }) {
-  return handleAutoAdvance({
+async function handleEvals({ state, userInput, modelConfig, projectConfig }) {
+  // If the user just typed 'default' or similar, use the default mix
+  const isDefault = typeof userInput === 'string' && /^default/i.test(userInput.trim());
+
+  if (isDefault) {
+    const DEFAULT_MIX = {
+      golden: { total: 10 },
+      labeled: { straightforward: 3, ambiguous: 3, edge: 2, adversarial: 2 }
+    };
+    const evalMix = projectConfig?.evals?.defaultMix || DEFAULT_MIX;
+    const newMessages = [...state.messages, { role: 'user', content: userInput }];
+    return {
+      nextState: {
+        ...state,
+        phase: 'verifiers',
+        spec: { ...state.spec, evalMix },
+        messages: newMessages
+      },
+      assistantText: 'Using default eval mix. Generating eval cases…',
+      specUpdate: { evalMix },
+      actions: [{ type: 'write_evals', payload: { evalMix } }],
+      phaseChanged: true
+    };
+  }
+
+  // Otherwise use JSON phase to let user customize
+  const result = await handleJsonPhase({
     state,
-    assistantMessage: 'Generating eval cases…',
-    actions: [{ type: 'write_evals' }],
+    userInput,
+    modelConfig,
+    systemPrompt: SYSTEM_PROMPTS.evalsInteractive,
+    validator: validateEvalMix,
+    applySpec: (json) => ({ evalMix: json.evalMix }),
     nextPhase: 'verifiers'
   });
+
+  // Attach the write_evals action if phase advanced
+  if (result.phaseChanged) {
+    const evalMix = result.nextState.spec.evalMix;
+    return {
+      ...result,
+      actions: [{ type: 'write_evals', payload: { evalMix } }]
+    };
+  }
+
+  return result;
 }
 
 function handleVerifiers({ state }) {
@@ -695,6 +904,9 @@ export async function forgeStep({
     case 'fields':
       return handleFields({ state, userInput, modelConfig });
 
+    case 'routing':
+      return handleRouting({ state, userInput, modelConfig });
+
     case 'deps':
       return handleDeps({ state, userInput, modelConfig });
 
@@ -708,7 +920,7 @@ export async function forgeStep({
       return handleTest({ state });
 
     case 'evals':
-      return handleEvals({ state });
+      return handleEvals({ state, userInput, modelConfig, projectConfig });
 
     case 'verifiers':
       return handleVerifiers({ state });

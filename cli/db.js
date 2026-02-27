@@ -21,6 +21,46 @@ CREATE TABLE IF NOT EXISTS eval_runs (
   notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS tool_registry (
+  tool_name TEXT PRIMARY KEY,
+  spec_json TEXT,
+  lifecycle_state TEXT NOT NULL DEFAULT 'candidate',
+  promoted_at TEXT,
+  flagged_at TEXT,
+  retired_at TEXT,
+  version TEXT DEFAULT '1.0.0',
+  replaced_by TEXT,
+  baseline_pass_rate REAL
+);
+
+CREATE TABLE IF NOT EXISTS eval_run_cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  eval_run_id INTEGER NOT NULL,
+  case_id TEXT,
+  tool_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT,
+  tools_called TEXT,
+  latency_ms INTEGER,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  run_at TEXT NOT NULL,
+  FOREIGN KEY (eval_run_id) REFERENCES eval_runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS drift_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool_name TEXT NOT NULL,
+  detected_at TEXT NOT NULL,
+  trigger_tools TEXT,
+  baseline_rate REAL,
+  current_rate REAL,
+  delta REAL,
+  status TEXT NOT NULL DEFAULT 'open',
+  resolved_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS tool_generations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tool_name TEXT NOT NULL,
@@ -62,6 +102,36 @@ export function getDb(dbPath) {
   } catch (err) {
     if (!err.message.includes('duplicate column name')) throw err;
   }
+  // Migrate: add model column
+  try {
+    db.exec('ALTER TABLE eval_runs ADD COLUMN model TEXT');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
+  // Migrate: add pass_rate column
+  try {
+    db.exec('ALTER TABLE eval_runs ADD COLUMN pass_rate REAL');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
+  // Migrate: add sample_type column
+  try {
+    db.exec('ALTER TABLE eval_runs ADD COLUMN sample_type TEXT');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
+  // Migrate: add input_tokens to eval_run_cases
+  try {
+    db.exec('ALTER TABLE eval_run_cases ADD COLUMN input_tokens INTEGER');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
+  // Migrate: add output_tokens to eval_run_cases
+  try {
+    db.exec('ALTER TABLE eval_run_cases ADD COLUMN output_tokens INTEGER');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
   return db;
 }
 
@@ -94,13 +164,13 @@ export function getEvalSummary(db) {
 /**
  * Insert one eval run record.
  * @param {import('better-sqlite3').Database} db
- * @param {{ tool_name: string; eval_type?: string; total_cases?: number; passed?: number; failed?: number; notes?: string }} row
- * @returns {import('better-sqlite3').RunResult}
+ * @param {{ tool_name: string; eval_type?: string; total_cases?: number; passed?: number; failed?: number; skipped?: number; notes?: string; model?: string; pass_rate?: number; sample_type?: string }} row
+ * @returns {number} lastInsertRowid
  */
 export function insertEvalRun(db, row) {
-  return db.prepare(`
-    INSERT INTO eval_runs (tool_name, run_at, eval_type, total_cases, passed, failed, skipped, notes)
-    VALUES (@tool_name, @run_at, @eval_type, @total_cases, @passed, @failed, @skipped, @notes)
+  const result = db.prepare(`
+    INSERT INTO eval_runs (tool_name, run_at, eval_type, total_cases, passed, failed, skipped, notes, model, pass_rate, sample_type)
+    VALUES (@tool_name, @run_at, @eval_type, @total_cases, @passed, @failed, @skipped, @notes, @model, @pass_rate, @sample_type)
   `).run({
     tool_name: row.tool_name,
     run_at: row.run_at ?? new Date().toISOString(),
@@ -109,8 +179,12 @@ export function insertEvalRun(db, row) {
     passed: row.passed ?? 0,
     failed: row.failed ?? 0,
     skipped: row.skipped ?? 0,
-    notes: row.notes ?? null
+    notes: row.notes ?? null,
+    model: row.model ?? null,
+    pass_rate: row.pass_rate ?? null,
+    sample_type: row.sample_type ?? null
   });
+  return result.lastInsertRowid;
 }
 
 /**
@@ -207,5 +281,225 @@ export function getModelComparisons(db, toolName) {
   }
   return db.prepare(`
     SELECT * FROM model_comparisons WHERE tool_name = ? ORDER BY compared_at DESC
+  `).all(toolName);
+}
+
+// ── tool_registry ──────────────────────────────────────────────────────────
+
+/**
+ * Upsert a row in tool_registry.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ tool_name: string; spec_json?: string; lifecycle_state?: string; promoted_at?: string; flagged_at?: string; retired_at?: string; version?: string; replaced_by?: string; baseline_pass_rate?: number }} row
+ */
+export function upsertToolRegistry(db, row) {
+  db.prepare(`
+    INSERT INTO tool_registry (tool_name, spec_json, lifecycle_state, promoted_at, flagged_at, retired_at, version, replaced_by, baseline_pass_rate)
+    VALUES (@tool_name, @spec_json, @lifecycle_state, @promoted_at, @flagged_at, @retired_at, @version, @replaced_by, @baseline_pass_rate)
+    ON CONFLICT(tool_name) DO UPDATE SET
+      spec_json = excluded.spec_json,
+      lifecycle_state = excluded.lifecycle_state,
+      promoted_at = excluded.promoted_at,
+      flagged_at = excluded.flagged_at,
+      retired_at = excluded.retired_at,
+      version = excluded.version,
+      replaced_by = excluded.replaced_by,
+      baseline_pass_rate = excluded.baseline_pass_rate
+  `).run({
+    tool_name: row.tool_name,
+    spec_json: row.spec_json ?? null,
+    lifecycle_state: row.lifecycle_state ?? 'candidate',
+    promoted_at: row.promoted_at ?? null,
+    flagged_at: row.flagged_at ?? null,
+    retired_at: row.retired_at ?? null,
+    version: row.version ?? '1.0.0',
+    replaced_by: row.replaced_by ?? null,
+    baseline_pass_rate: row.baseline_pass_rate ?? null
+  });
+}
+
+/**
+ * Get a single tool_registry row by tool name.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName
+ * @returns {object|null}
+ */
+export function getToolRegistry(db, toolName) {
+  return db.prepare(`SELECT * FROM tool_registry WHERE tool_name = ?`).get(toolName) ?? null;
+}
+
+/**
+ * Get all tool_registry rows.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {object[]}
+ */
+export function getAllToolRegistry(db) {
+  return db.prepare(`SELECT * FROM tool_registry ORDER BY tool_name`).all();
+}
+
+/**
+ * Partially update lifecycle fields on a tool_registry row.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName
+ * @param {Partial<{ lifecycle_state: string; promoted_at: string; flagged_at: string; retired_at: string; replaced_by: string; baseline_pass_rate: number }>} updates
+ */
+export function updateToolLifecycle(db, toolName, updates) {
+  const allowed = ['lifecycle_state', 'promoted_at', 'flagged_at', 'retired_at', 'replaced_by', 'baseline_pass_rate'];
+  const fields = Object.keys(updates).filter((k) => allowed.includes(k));
+  if (fields.length === 0) return;
+  const setClauses = fields.map((f) => `${f} = @${f}`).join(', ');
+  const params = { tool_name: toolName };
+  for (const f of fields) params[f] = updates[f];
+  db.prepare(`UPDATE tool_registry SET ${setClauses} WHERE tool_name = @tool_name`).run(params);
+}
+
+// ── eval_run_cases ─────────────────────────────────────────────────────────
+
+/**
+ * Batch insert eval run case rows in a transaction.
+ * @param {import('better-sqlite3').Database} db
+ * @param {Array<{ eval_run_id: number; case_id?: string; tool_name: string; status: string; reason?: string; tools_called?: string; latency_ms?: number; model?: string }>} rows
+ */
+export function insertEvalRunCases(db, rows) {
+  const stmt = db.prepare(`
+    INSERT INTO eval_run_cases (eval_run_id, case_id, tool_name, status, reason, tools_called, latency_ms, model, input_tokens, output_tokens, run_at)
+    VALUES (@eval_run_id, @case_id, @tool_name, @status, @reason, @tools_called, @latency_ms, @model, @input_tokens, @output_tokens, @run_at)
+  `);
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const row of rows) {
+      stmt.run({
+        eval_run_id: row.eval_run_id,
+        case_id: row.case_id ?? null,
+        tool_name: row.tool_name,
+        status: row.status,
+        reason: row.reason ?? null,
+        tools_called: row.tools_called ?? null,
+        latency_ms: row.latency_ms ?? null,
+        model: row.model ?? null,
+        input_tokens: row.input_tokens ?? null,
+        output_tokens: row.output_tokens ?? null,
+        run_at: now
+      });
+    }
+  })();
+}
+
+/**
+ * Get eval run cases for a specific tool (or any tool if toolName is null), with LIMIT.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string|null} toolName - null = any tool
+ * @param {number} [limit=50]
+ * @returns {object[]}
+ */
+export function getEvalRunCasesByTool(db, toolName, limit = 50) {
+  if (toolName == null) {
+    return db.prepare(`SELECT * FROM eval_run_cases ORDER BY run_at DESC LIMIT ?`).all(limit);
+  }
+  return db.prepare(`SELECT * FROM eval_run_cases WHERE tool_name = ? ORDER BY run_at DESC LIMIT ?`).all(toolName, limit);
+}
+
+// ── drift_alerts ───────────────────────────────────────────────────────────
+
+/**
+ * Insert a drift alert record.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ tool_name: string; trigger_tools?: string; baseline_rate?: number; current_rate?: number; delta?: number }} row
+ * @returns {number} lastInsertRowid
+ */
+export function insertDriftAlert(db, row) {
+  const result = db.prepare(`
+    INSERT INTO drift_alerts (tool_name, detected_at, trigger_tools, baseline_rate, current_rate, delta, status)
+    VALUES (@tool_name, @detected_at, @trigger_tools, @baseline_rate, @current_rate, @delta, 'open')
+  `).run({
+    tool_name: row.tool_name,
+    detected_at: new Date().toISOString(),
+    trigger_tools: row.trigger_tools ?? null,
+    baseline_rate: row.baseline_rate ?? null,
+    current_rate: row.current_rate ?? null,
+    delta: row.delta ?? null
+  });
+  return result.lastInsertRowid;
+}
+
+/**
+ * Get drift alerts — all open alerts if toolName is null, or filtered by tool.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string|null} toolName - null = all open alerts
+ * @returns {object[]}
+ */
+export function getDriftAlerts(db, toolName) {
+  if (toolName == null) {
+    return db.prepare(`SELECT * FROM drift_alerts WHERE status = 'open' ORDER BY detected_at DESC`).all();
+  }
+  return db.prepare(`SELECT * FROM drift_alerts WHERE tool_name = ? AND status = 'open' ORDER BY detected_at DESC`).all(toolName);
+}
+
+/**
+ * Mark a drift alert as resolved.
+ * @param {import('better-sqlite3').Database} db
+ * @param {number} alertId
+ */
+export function resolveDriftAlert(db, alertId) {
+  db.prepare(`UPDATE drift_alerts SET status = 'resolved', resolved_at = ? WHERE id = ?`)
+    .run(new Date().toISOString(), alertId);
+}
+
+/**
+ * Mark a drift alert as dismissed (acknowledged, not fixed).
+ * @param {import('better-sqlite3').Database} db
+ * @param {number} alertId
+ */
+export function dismissDriftAlert(db, alertId) {
+  db.prepare(`UPDATE drift_alerts SET status = 'dismissed', resolved_at = ? WHERE id = ?`)
+    .run(new Date().toISOString(), alertId);
+}
+
+// ── performance trending ───────────────────────────────────────────────────
+
+/**
+ * Get per-tool eval run history for trending (pass_rate over time).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName
+ * @param {number} [windowSize=10]
+ * @returns {object[]} rows with run_at, pass_rate, passed, total_cases
+ */
+export function getPerToolRunHistory(db, toolName, windowSize = 10) {
+  return db.prepare(`
+    SELECT run_at, pass_rate, passed, total_cases, model
+    FROM eval_runs
+    WHERE tool_name = ? AND total_cases > 0
+    ORDER BY run_at DESC
+    LIMIT ?
+  `).all(toolName, windowSize);
+}
+
+/**
+ * Get per-model aggregate stats for a tool's eval cases.
+ * Used by the model comparison view.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName
+ * @returns {Array<{
+ *   model: string,
+ *   case_count: number,
+ *   passed: number,
+ *   avg_latency_ms: number,
+ *   total_input_tokens: number,
+ *   total_output_tokens: number
+ * }>}
+ */
+export function getModelComparisonData(db, toolName) {
+  return db.prepare(`
+    SELECT
+      model,
+      COUNT(*) AS case_count,
+      SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) AS passed,
+      ROUND(AVG(latency_ms)) AS avg_latency_ms,
+      SUM(COALESCE(input_tokens, 0)) AS total_input_tokens,
+      SUM(COALESCE(output_tokens, 0)) AS total_output_tokens
+    FROM eval_run_cases
+    WHERE tool_name = ? AND model IS NOT NULL AND status != 'skipped'
+    GROUP BY model
+    ORDER BY (passed * 1.0 / COUNT(*)) DESC
   `).all(toolName);
 }

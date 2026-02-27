@@ -67,7 +67,31 @@
     "labeledDir": "evals/dataset/labeled",
     "overlapMapFile": "evals/tool-overlap-map.json",
     "seedManifestFile": "evals/seed-manifest.json",
-    "_comment": "Paths are relative to project root"
+    "_comment": "Paths are relative to project root",
+    "defaultMix": {
+      "golden": { "total": 10 },
+      "labeled": { "straightforward": 3, "ambiguous": 3, "edge": 2, "adversarial": 2 }
+    },
+    "multiPass": { "passes": 3 },
+    "randomSample": { "aggression": "standard" }
+  },
+  "drift": {
+    "threshold": 0.1,
+    "windowSize": 5
+  },
+  "modelMatrix": [],
+  "_modelMatrixComment": "Add model names to compare during eval runs, e.g. ['gpt-4o-mini', 'gemini-2.0-flash', 'claude-haiku-4-5-20251001']",
+  "costs": {
+    "claude-haiku-4-5-20251001":  { "input": 0.80,  "output": 4.00  },
+    "claude-sonnet-4-6":          { "input": 3.00,  "output": 15.00 },
+    "claude-opus-4-6":            { "input": 15.00, "output": 75.00 },
+    "gpt-4o":                     { "input": 2.50,  "output": 10.00 },
+    "gpt-4o-mini":                { "input": 0.15,  "output": 0.60  },
+    "o1":                         { "input": 15.00, "output": 60.00 },
+    "o3-mini":                    { "input": 1.10,  "output": 4.40  },
+    "gemini-2.0-flash":           { "input": 0.10,  "output": 0.40  },
+    "gemini-2.5-pro-exp":         { "input": 1.25,  "output": 10.00 },
+    "deepseek-chat":              { "input": 0.27,  "output": 1.10  }
   },
 
   "verification": {

@@ -17,13 +17,21 @@ async function loadData(config) {
   const verifiers = getExistingVerifiers(verification);
 
   let evalMap = {};
+  let registryMap = {};
+  let driftMap = {};
   try {
     const dbPath = resolve(process.cwd(), config?.dbPath || 'forge.db');
     if (existsSync(dbPath)) {
-      const { getDb, getEvalSummary } = await import('../db.js');
+      const { getDb, getEvalSummary, getAllToolRegistry, getDriftAlerts } = await import('../db.js');
       const db = getDb(dbPath);
       const summary = getEvalSummary(db);
       evalMap = Object.fromEntries(summary.map((r) => [r.tool_name, r]));
+      const registry = getAllToolRegistry(db);
+      registryMap = Object.fromEntries(registry.map((r) => [r.tool_name, r]));
+      const alerts = getDriftAlerts(db, null);
+      for (const a of alerts) {
+        driftMap[a.tool_name] = a;
+      }
     }
   } catch (_) { /* sqlite not available */ }
 
@@ -31,12 +39,22 @@ async function loadData(config) {
     const groups = inferOutputGroups(t);
     const covering = getVerifiersForGroups(groups).filter((v) => verifiers.includes(v));
     const evalRow = evalMap[t.name];
+    const regRow = registryMap[t.name];
+    const hasDrift = !!driftMap[t.name];
+    const lifecycle = regRow?.lifecycle_state || 'candidate';
+    const passRate = evalRow && evalRow.total_cases > 0
+      ? `${Math.round((evalRow.passed / evalRow.total_cases) * 100)}%`
+      : '—';
     return {
       name: t.name,
       category: (t.tags || []).join(',') || '—',
-      status: 'active',
+      lifecycle,
+      passRate,
+      hasDrift,
       evalRuns: evalRow ? String(evalRow.total_cases) : '0',
-      verifiers: covering.length > 0 ? covering.join(', ') : '—'
+      verifiers: covering.length > 0 ? covering.join(', ') : '—',
+      _regRow: regRow,
+      _driftAlert: driftMap[t.name] || null
     };
   });
 }
@@ -94,11 +112,15 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   container.refresh = async () => {
     try {
       rowData = await loadData(config);
-      const headers = ['Name', 'Category', 'Status', 'Eval Cases', 'Verifiers'];
-      const rows = rowData.map((r) => [r.name, r.category, r.status, r.evalRuns, r.verifiers]);
+      const headers = ['Name', 'Category', 'Lifecycle', 'Pass Rate', 'Drift'];
+      const rows = rowData.map((r) => {
+        const lifecycleBadge = lifecycleBadgeFor(r.lifecycle);
+        const driftBadge = r.hasDrift ? '{red-fg}⚠ drift{/red-fg}' : '{#555555-fg}—{/#555555-fg}';
+        return [r.name, r.category, lifecycleBadge, r.passRate, driftBadge];
+      });
       table.setData([headers, ...rows]);
     } catch (err) {
-      table.setData([['Name', 'Category', 'Status', 'Eval Cases', 'Verifiers'], ['Error loading: ' + err.message, '', '', '', '']]);
+      table.setData([['Name', 'Category', 'Lifecycle', 'Pass Rate', 'Drift'], ['Error loading: ' + err.message, '', '', '', '']]);
     }
     screen.render();
   };
@@ -108,14 +130,28 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return container;
 }
 
+function lifecycleBadgeFor(state) {
+  switch (state) {
+    case 'promoted':  return '{green-fg}promoted{/green-fg}';
+    case 'flagged':   return '{yellow-fg}flagged{/yellow-fg}';
+    case 'retired':   return '{#555555-fg}retired{/#555555-fg}';
+    case 'swapped':   return '{#555555-fg}swapped{/#555555-fg}';
+    default:          return '{#888888-fg}candidate{/#888888-fg}';
+  }
+}
+
 function showActionMenu(screen, tool, navigate, config, openPopup, closePopup, setStatus) {
   const items = [
     `{cyan-fg}▸{/cyan-fg} Run evals  {#888888-fg}(uses API key from .env){/#888888-fg}`,
+    `  Compare models`,
     `  View eval results`,
     `  View tool file`,
     `  Generate evals (AI)`,
     `  Generate verifiers (AI)`,
     `  Re-forge tool`,
+    `  Promote to registry`,
+    `  View drift report`,
+    `  Mediate (fast-track)`,
     `  — Cancel —`
   ];
 
@@ -123,7 +159,7 @@ function showActionMenu(screen, tool, navigate, config, openPopup, closePopup, s
     parent: screen,
     border: 'line',
     height: items.length + 4,
-    width: 46,
+    width: 54,
     top: 'center',
     left: 'center',
     label: ` ⚙ ${tool.name} `,
@@ -147,21 +183,34 @@ function showActionMenu(screen, tool, navigate, config, openPopup, closePopup, s
       config._evalTarget = tool.name;
       navigate('eval-run');
     } else if (idx === 1) {
-      navigate('performance');
+      // Compare models
+      await compareModelsForTool(tool, config, screen, setStatus, navigate, openPopup, closePopup);
     } else if (idx === 2) {
-      setStatus(`Tool file: ${config?.project?.toolsDir || 'example/tools'}/${tool.name}.tool.*`, false);
+      navigate('performance');
     } else if (idx === 3) {
+      setStatus(`Tool file: ${config?.project?.toolsDir || 'example/tools'}/${tool.name}.tool.*`, false);
+    } else if (idx === 4) {
       // Generate evals (AI)
       await generateEvalsForTool(tool, config, screen, setStatus, openPopup, closePopup);
-    } else if (idx === 4) {
+    } else if (idx === 5) {
       // Generate verifiers (AI)
       await generateVerifiersForTool(tool, config, screen, setStatus, openPopup, closePopup);
-    } else if (idx === 5) {
+    } else if (idx === 6) {
       // Re-forge tool
       config._forgeTarget = { toolName: tool.name, spec: null };
       navigate('forge');
+    } else if (idx === 7) {
+      // Promote to registry
+      await promoteToolToRegistry(tool, config, screen, setStatus, openPopup, closePopup);
+    } else if (idx === 8) {
+      // View drift report
+      await showDriftReport(tool, config, screen, openPopup, closePopup);
+    } else if (idx === 9) {
+      // Mediate (fast-track)
+      config._mediationTarget = tool.name;
+      navigate('mediation');
     }
-    // idx 6 = cancel
+    // idx 10 = cancel
   });
 
   menu.key(['escape', 'q'], () => { closePopup?.(); menu.destroy(); screen.render(); });
@@ -242,6 +291,150 @@ async function generateEvalsForTool(tool, config, screen, setStatus, openPopup, 
       screen.render();
     }, 3000);
   }
+}
+
+async function compareModelsForTool(tool, config, screen, setStatus, navigate, openPopup, closePopup) {
+  const matrix = config?.modelMatrix || [];
+  if (matrix.length === 0) {
+    setStatus('No model matrix configured. Go to Settings → Model Matrix to add models.', true);
+    return;
+  }
+
+  const progressBox = blessed.box({
+    parent: screen,
+    border: 'line',
+    top: 'center', left: 'center',
+    width: 60, height: 8,
+    label: ' Comparing Models ',
+    tags: true,
+    content: `\n  {yellow-fg}⟳ Running evals across ${matrix.length} model(s)…{/yellow-fg}\n\n  This may take a few minutes.`
+  });
+  openPopup?.();
+  screen.render();
+
+  try {
+    const { runEvalsMultiPass } = await import('../eval-runner.js');
+
+    let lastStatus = '';
+    const result = await runEvalsMultiPass(
+      tool.name,
+      config,
+      process.cwd(),
+      {},
+      (progress) => {
+        const line = `  ${progress.model}: case ${progress.done}/${progress.total}`;
+        if (line !== lastStatus) {
+          lastStatus = line;
+          progressBox.setContent(`\n{yellow-fg}⟳ Running…{/yellow-fg}\n\n${line}`);
+          screen.render();
+        }
+      }
+    );
+
+    closePopup?.();
+    progressBox.destroy();
+    screen.render();
+
+    // Warn if any models failed due to missing API keys
+    const errorModels = Object.entries(result.perModel)
+      .filter(([, v]) => v.error)
+      .map(([k]) => k);
+    if (errorModels.length > 0) {
+      setStatus(`Warning: ${errorModels.join(', ')} skipped (no API key). Check Settings → Model Matrix.`, true);
+    }
+
+    // Navigate to model-comparison view with results
+    config._comparisonTarget = { toolName: tool.name, perModel: result.perModel };
+    navigate('model-comparison');
+
+  } catch (err) {
+    progressBox.setContent(`\n  {red-fg}⚠ ${err.message}{/red-fg}`);
+    screen.render();
+    setTimeout(() => {
+      closePopup?.();
+      progressBox.destroy();
+      screen.render();
+    }, 4000);
+  }
+}
+
+async function promoteToolToRegistry(tool, config, screen, setStatus, openPopup, closePopup) {
+  setStatus('Promoting tool to registry…', false);
+  try {
+    const dbPath = resolve(process.cwd(), config?.dbPath || 'forge.db');
+    if (!existsSync(dbPath)) {
+      setStatus('No forge.db found — run evals first.', true);
+      return;
+    }
+    const { getDb, upsertToolRegistry, getEvalSummary } = await import('../db.js');
+    const db = getDb(dbPath);
+    const summary = getEvalSummary(db);
+    const evalRow = summary.find((r) => r.tool_name === tool.name);
+    const baseline = evalRow && evalRow.total_cases > 0
+      ? evalRow.passed / evalRow.total_cases
+      : null;
+
+    // Upsert the registry row (creates or updates in a single statement)
+    upsertToolRegistry(db, {
+      tool_name: tool.name,
+      lifecycle_state: 'promoted',
+      promoted_at: new Date().toISOString(),
+      baseline_pass_rate: baseline
+    });
+
+    setStatus(`${tool.name} promoted. Baseline: ${baseline != null ? `${Math.round(baseline * 100)}%` : 'N/A'}`, false);
+  } catch (err) {
+    setStatus(`Promote failed: ${err.message}`, true);
+  }
+}
+
+async function showDriftReport(tool, config, screen, openPopup, closePopup) {
+  let content = '';
+  try {
+    const dbPath = resolve(process.cwd(), config?.dbPath || 'forge.db');
+    if (existsSync(dbPath)) {
+      const { getDb, getDriftAlerts } = await import('../db.js');
+      const { computeSuspects } = await import('../drift-monitor.js');
+      const db = getDb(dbPath);
+      const alerts = getDriftAlerts(db, tool.name);
+      if (alerts.length === 0) {
+        content = '\n  {green-fg}No open drift alerts for this tool.{/green-fg}';
+      } else {
+        const alert = alerts[0];
+        const suspects = computeSuspects(db, tool.name);
+        content = `\n  {yellow-fg}Drift Detected{/yellow-fg}\n` +
+          `  Detected: ${alert.detected_at?.slice(0, 19) || '?'}\n` +
+          `  Baseline: ${alert.baseline_rate != null ? `${Math.round(alert.baseline_rate * 100)}%` : 'N/A'}\n` +
+          `  Current:  ${alert.current_rate != null ? `${Math.round(alert.current_rate * 100)}%` : 'N/A'}\n` +
+          `  Delta:    ${alert.delta != null ? `-${Math.round(alert.delta * 100)}pp` : '?'}\n\n` +
+          `  {cyan-fg}Suspects:{/cyan-fg} ${suspects.length > 0 ? suspects.join(', ') : '(none identified)'}`;
+      }
+    } else {
+      content = '\n  {#888888-fg}No database found.{/#888888-fg}';
+    }
+  } catch (err) {
+    content = `\n  {red-fg}Error: ${err.message}{/red-fg}`;
+  }
+
+  const popup = blessed.box({
+    parent: screen,
+    border: 'line',
+    top: 'center',
+    left: 'center',
+    width: 60,
+    height: 14,
+    label: ` Drift Report: ${tool.name} `,
+    tags: true,
+    content
+  });
+  openPopup?.();
+  popup.key(['escape', 'q', 'enter'], () => {
+    closePopup?.();
+    popup.destroy();
+    screen.render();
+  });
+  popup.focus();
+  screen.render();
 }
 
 async function generateVerifiersForTool(tool, config, screen, setStatus, openPopup, closePopup) {

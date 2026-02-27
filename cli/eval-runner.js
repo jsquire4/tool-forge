@@ -11,7 +11,7 @@
 
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { resolve, join } from 'path';
-import { llmTurn } from './api-client.js';
+import { llmTurn, normalizeUsage, modelConfigForName } from './api-client.js';
 
 // ── Assertion checker ──────────────────────────────────────────────────────
 
@@ -226,17 +226,29 @@ function loadEnv(projectRoot) {
 export async function runEvals(toolName, config, projectRoot, onProgress) {
   const env = loadEnv(projectRoot);
 
-  // Determine provider + key
-  const anthropicKey = env['ANTHROPIC_API_KEY'];
-  const openaiKey    = env['OPENAI_API_KEY'];
-
-  if (!anthropicKey && !openaiKey) {
-    throw new Error('No API key found. Add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env in Settings.');
+  // Determine provider + key.
+  // If config.model is explicitly set, detect its provider and resolve the matching key.
+  // Otherwise fall back to whichever key is available (Anthropic preferred).
+  let provider, model, apiKey;
+  if (config?.model) {
+    const mc = modelConfigForName(config.model, env);
+    provider = mc.provider;
+    model    = mc.model;
+    apiKey   = mc.apiKey;
+    if (!apiKey) {
+      throw new Error(`No API key found for provider "${provider}" (model: ${model}). Add the key to .env in Settings.`);
+    }
+  } else {
+    const anthropicKey = env['ANTHROPIC_API_KEY'];
+    const openaiKey    = env['OPENAI_API_KEY'];
+    if (!anthropicKey && !openaiKey) {
+      throw new Error('No API key found. Add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env in Settings.');
+    }
+    const useAnthropic = !!anthropicKey;
+    provider = useAnthropic ? 'anthropic' : 'openai';
+    model    = useAnthropic ? 'claude-sonnet-4-6' : 'gpt-4o-mini';
+    apiKey   = useAnthropic ? anthropicKey : openaiKey;
   }
-
-  const useAnthropic = !!anthropicKey;
-  const provider = useAnthropic ? 'anthropic' : 'openai';
-  const model = config?.model || (useAnthropic ? 'claude-sonnet-4-6' : 'gpt-4o-mini');
 
   // Load system prompt
   let systemPrompt = '';
@@ -275,9 +287,8 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
     for (const c of cases) allCases.push({ ...c, _evalType: type });
   }
 
-  const apiKey  = useAnthropic ? anthropicKey : openaiKey;
-
   const results = [];
+  const caseRows = [];
   let passed = 0;
   let failed = 0;
   let skipped = 0;
@@ -290,10 +301,13 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
       skipped++;
       onProgress?.({ done: i + 1, total: allCases.length, caseId: evalCase.id, passed: null, reason: 'no input message' });
       results.push({ id: evalCase.id, description: evalCase.description, status: 'skipped', reason: 'no input message' });
+      caseRows.push({ case_id: evalCase.id, tool_name: toolName, status: 'skipped', reason: 'no input message', tools_called: null, latency_ms: null, model });
       continue;
     }
 
     let apiResult;
+    let rawUsage = null;
+    const t0 = Date.now();
     try {
       const turnResult = await llmTurn({
         provider,
@@ -309,14 +323,18 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
         toolsCalled: turnResult.toolCalls.map((tc) => tc.name),
         responseText: turnResult.text
       };
+      rawUsage = turnResult.usage ?? null;
     } catch (err) {
       failed++;
       const reason = `API error: ${err.message}`;
       onProgress?.({ done: i + 1, total: allCases.length, caseId: evalCase.id, passed: false, reason });
       results.push({ id: evalCase.id, description: evalCase.description, status: 'failed', reason });
+      caseRows.push({ case_id: evalCase.id, tool_name: toolName, status: 'failed', reason, tools_called: null, latency_ms: Date.now() - t0, model, input_tokens: null, output_tokens: null });
       continue;
     }
 
+    const latency_ms = Date.now() - t0;
+    const { inputTokens, outputTokens } = normalizeUsage(rawUsage, provider);
     const failures = checkAssertions(evalCase, apiResult);
     const casePassed = failures.length === 0;
 
@@ -333,26 +351,137 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
       reason,
       toolsCalled: apiResult.toolsCalled
     });
+    caseRows.push({
+      case_id: evalCase.id,
+      tool_name: toolName,
+      status: casePassed ? 'passed' : 'failed',
+      reason,
+      tools_called: JSON.stringify(apiResult.toolsCalled),
+      latency_ms,
+      model,
+      input_tokens: inputTokens || null,
+      output_tokens: outputTokens || null
+    });
   }
 
   // Persist to SQLite
   try {
     const dbPath = resolve(projectRoot, config?.dbPath || 'forge.db');
-    const { getDb, insertEvalRun } = await import('./db.js');
+    const { getDb, insertEvalRun, insertEvalRunCases } = await import('./db.js');
     const db = getDb(dbPath);
     const evalType = allCases.every((c) => c._evalType === 'golden') ? 'golden'
       : allCases.every((c) => c._evalType === 'labeled') ? 'labeled'
       : 'mixed';
-    insertEvalRun(db, {
+    const passRate = allCases.length > 0 ? passed / allCases.length : 0;
+    const evalRunId = insertEvalRun(db, {
       tool_name: toolName,
       eval_type: evalType,
       total_cases: allCases.length,
       passed,
       failed,
       skipped,
-      notes: `provider:${provider} model:${model}`
+      notes: `provider:${provider} model:${model}`,
+      model,
+      pass_rate: passRate,
+      sample_type: 'targeted'
     });
+    if (caseRows.length > 0) {
+      insertEvalRunCases(db, caseRows.map((r) => ({ ...r, eval_run_id: evalRunId })));
+    }
   } catch (_) { /* db write failure is non-fatal */ }
 
   return { total: allCases.length, passed, failed, skipped, cases: results, provider, model };
+}
+
+// ── Multi-pass eval runner ────────────────────────────────────────────────
+
+/**
+ * Run evals across a model matrix, collecting per-model results.
+ * Model matrix is resolved from config.modelMatrix (list of model name strings).
+ * Each model's provider + API key is resolved automatically via modelConfigForName.
+ *
+ * @param {string} toolName
+ * @param {object} config  - full forge config (must include dbPath for env resolution)
+ * @param {string} projectRoot
+ * @param {{ modelMatrix?: string[] }} [options]  - override matrix; defaults to config.modelMatrix
+ * @param {function} [onProgress]  - called with { model, done, total, caseId, passed }
+ * @returns {Promise<{ perModel: Record<string, { passed, failed, total, pass_rate }> }>}
+ */
+export async function runEvalsMultiPass(toolName, config, projectRoot, options = {}, onProgress) {
+  // Resolve env for API key lookup
+  const envPath = resolve(projectRoot, '.env');
+  const env = {};
+  if (existsSync(envPath)) {
+    const lines = readFileSync(envPath, 'utf-8').split('\n');
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const eq = t.indexOf('=');
+      if (eq === -1) continue;
+      env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+    }
+  }
+
+  const matrixNames = options.modelMatrix || config?.modelMatrix || [];
+  if (matrixNames.length === 0) {
+    throw new Error('No model matrix configured. Add "modelMatrix" to forge.config.json.');
+  }
+
+  const perModel = {};
+
+  for (const modelName of matrixNames) {
+    const mc = modelConfigForName(modelName, env);
+    if (!mc.apiKey) {
+      perModel[modelName] = { error: `No API key found for provider "${mc.provider}"` };
+      continue;
+    }
+
+    // Build a config override for this model
+    const modelConfig = { ...config, model: modelName, models: { ...config?.models, eval: modelName } };
+
+    try {
+      const result = await runEvals(
+        toolName,
+        modelConfig,
+        projectRoot,
+        (progress) => onProgress?.({ model: modelName, ...progress })
+      );
+      perModel[modelName] = {
+        passed: result.passed,
+        failed: result.failed,
+        total: result.total,
+        skipped: result.skipped,
+        pass_rate: result.total > 0 ? result.passed / result.total : 0,
+        provider: result.provider
+      };
+    } catch (err) {
+      perModel[modelName] = { error: err.message };
+    }
+  }
+
+  return { perModel };
+}
+
+// ── Random sample helper ──────────────────────────────────────────────────
+
+/**
+ * Pull n random eval run cases from OTHER tools for blind drift detection.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName - The tool to EXCLUDE from sampling
+ * @param {number} n
+ * @returns {object[]} eval case rows with _sampleType: 'sampled'
+ */
+export function withRandomSample(db, toolName, n) {
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM eval_run_cases
+      WHERE tool_name != ?
+      ORDER BY RANDOM()
+      LIMIT ?
+    `).all(toolName, n);
+    return rows.map((r) => ({ ...r, _sampleType: 'sampled' }));
+  } catch (_) {
+    return [];
+  }
 }

@@ -113,7 +113,37 @@ export async function llmTurn({
   if (provider === 'openai') {
     return _openaiTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
   }
-  throw new Error(`llmTurn: unknown provider "${provider}". Expected 'anthropic' or 'openai'.`);
+  if (provider === 'google') {
+    return _geminiTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
+  }
+  if (provider === 'deepseek') {
+    return _deepseekTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
+  }
+  throw new Error(`llmTurn: unknown provider "${provider}". Expected 'anthropic', 'openai', 'google', or 'deepseek'.`);
+}
+
+/**
+ * Normalise provider-specific usage objects to a common shape.
+ * Anthropic: { input_tokens, output_tokens }
+ * OpenAI/DeepSeek/Gemini-compat: { prompt_tokens, completion_tokens }
+ *
+ * @param {object|null} usage - Raw usage object from API response
+ * @param {string} provider
+ * @returns {{ inputTokens: number, outputTokens: number }}
+ */
+export function normalizeUsage(usage, provider) {
+  if (!usage) return { inputTokens: 0, outputTokens: 0 };
+  if (provider === 'anthropic') {
+    return {
+      inputTokens: usage.input_tokens || 0,
+      outputTokens: usage.output_tokens || 0
+    };
+  }
+  // OpenAI-compatible (openai, google, deepseek)
+  return {
+    inputTokens: usage.prompt_tokens || 0,
+    outputTokens: usage.completion_tokens || 0
+  };
 }
 
 // ── Internal: Anthropic ────────────────────────────────────────────────────
@@ -217,6 +247,115 @@ async function _openaiTurn({ apiKey, model, system, messages, tools, maxTokens, 
   };
 }
 
+// ── Internal: Google Gemini (OpenAI-compatible endpoint) ──────────────────
+
+async function _geminiTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs }) {
+  // Gemini exposes an OpenAI-compatible endpoint — same JSON shape, different host + auth
+  const msgs = system
+    ? [{ role: 'system', content: system }, ...messages]
+    : [...messages];
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: msgs,
+    ...(tools.length ? { tools: tools.map(toOpenAiTool), tool_choice: 'auto' } : {})
+  };
+
+  const raw = await httpsPost(
+    'generativelanguage.googleapis.com',
+    '/v1beta/openai/chat/completions',
+    {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body,
+    timeoutMs
+  );
+
+  let data;
+  try {
+    data = JSON.parse(raw.body);
+  } catch (_) {
+    throw new Error(
+      `Gemini API returned non-JSON (status ${raw.status}): ${raw.body.slice(0, 120)}`
+    );
+  }
+
+  if (data.error) throw new Error(`Gemini API: ${data.error.message || JSON.stringify(data.error)}`);
+
+  const msg = data.choices?.[0]?.message || {};
+  const toolCalls = (msg.tool_calls || []).map((tc) => ({
+    id: tc.id,
+    name: tc.function?.name,
+    input: (() => {
+      try { return JSON.parse(tc.function?.arguments || '{}'); } catch (_) { return {}; }
+    })()
+  }));
+
+  return {
+    text:       msg.content || '',
+    toolCalls,
+    rawContent: msg,
+    stopReason: data.choices?.[0]?.finish_reason ?? null,
+    usage:      data.usage ?? null
+  };
+}
+
+// ── Internal: DeepSeek (OpenAI-compatible) ────────────────────────────────
+
+async function _deepseekTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs }) {
+  const msgs = system
+    ? [{ role: 'system', content: system }, ...messages]
+    : [...messages];
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: msgs,
+    ...(tools.length ? { tools: tools.map(toOpenAiTool), tool_choice: 'auto' } : {})
+  };
+
+  const raw = await httpsPost(
+    'api.deepseek.com',
+    '/v1/chat/completions',
+    {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body,
+    timeoutMs
+  );
+
+  let data;
+  try {
+    data = JSON.parse(raw.body);
+  } catch (_) {
+    throw new Error(
+      `DeepSeek API returned non-JSON (status ${raw.status}): ${raw.body.slice(0, 120)}`
+    );
+  }
+
+  if (data.error) throw new Error(`DeepSeek API: ${data.error.message || JSON.stringify(data.error)}`);
+
+  const msg = data.choices?.[0]?.message || {};
+  const toolCalls = (msg.tool_calls || []).map((tc) => ({
+    id: tc.id,
+    name: tc.function?.name,
+    input: (() => {
+      try { return JSON.parse(tc.function?.arguments || '{}'); } catch (_) { return {}; }
+    })()
+  }));
+
+  return {
+    text:       msg.content || '',
+    toolCalls,
+    rawContent: msg,
+    stopReason: data.choices?.[0]?.finish_reason ?? null,
+    usage:      data.usage ?? null
+  };
+}
+
 // ── Model config resolver ──────────────────────────────────────────────────
 
 /**
@@ -234,11 +373,13 @@ const ROLE_DEFAULTS = {
  * Detect provider from model name.
  *
  * @param {string} model
- * @returns {'anthropic'|'openai'}
+ * @returns {'anthropic'|'openai'|'google'|'deepseek'}
  */
 function detectProvider(model) {
   if (!model) return 'anthropic';
   if (model.startsWith('claude-')) return 'anthropic';
+  if (model.startsWith('gemini-')) return 'google';
+  if (model.startsWith('deepseek-')) return 'deepseek';
   if (
     model.startsWith('gpt-') ||
     model.startsWith('o1') ||
@@ -256,15 +397,17 @@ function detectProvider(model) {
  *   2. config.model
  *   3. Hardcoded default for the role
  *
- * Priority for API key:
- *   - ANTHROPIC_API_KEY if provider is 'anthropic'
- *   - OPENAI_API_KEY if provider is 'openai'
- *   Returns null apiKey if neither is present (callers must check).
+ * Priority for API key (by provider):
+ *   anthropic → ANTHROPIC_API_KEY
+ *   openai    → OPENAI_API_KEY
+ *   google    → GOOGLE_API_KEY or GEMINI_API_KEY
+ *   deepseek  → DEEPSEEK_API_KEY
+ *   Returns null apiKey if key is not present (callers must check).
  *
  * @param {object}      config  - Forge config object (may be null/undefined)
  * @param {object}      env     - Key/value env object (e.g. from process.env or loadEnv())
  * @param {string}      [role]  - 'generation' | 'eval' | 'verifier' | 'secondary'
- * @returns {{ provider: 'anthropic'|'openai', apiKey: string|null, model: string|null }}
+ * @returns {{ provider: 'anthropic'|'openai'|'google'|'deepseek', apiKey: string|null, model: string|null }}
  */
 export function resolveModelConfig(config, env, role = 'generation') {
   const model =
@@ -275,10 +418,30 @@ export function resolveModelConfig(config, env, role = 'generation') {
 
   const provider = detectProvider(model);
 
-  const apiKey =
-    provider === 'anthropic'
-      ? (env?.ANTHROPIC_API_KEY ?? null)
-      : (env?.OPENAI_API_KEY ?? null);
+  let apiKey = null;
+  if (provider === 'anthropic') apiKey = env?.ANTHROPIC_API_KEY ?? null;
+  else if (provider === 'openai') apiKey = env?.OPENAI_API_KEY ?? null;
+  else if (provider === 'google') apiKey = env?.GOOGLE_API_KEY ?? env?.GEMINI_API_KEY ?? null;
+  else if (provider === 'deepseek') apiKey = env?.DEEPSEEK_API_KEY ?? null;
 
   return { provider, apiKey, model };
+}
+
+/**
+ * Build a modelConfig object for a specific model string, resolving provider + key from env.
+ * Convenience wrapper used by the model matrix runner.
+ *
+ * @param {string} modelName
+ * @param {object} env
+ * @returns {{ provider: string, apiKey: string|null, model: string }}
+ */
+export function modelConfigForName(modelName, env) {
+  if (!modelName) throw new Error('modelConfigForName: modelName is required');
+  const provider = detectProvider(modelName);
+  let apiKey = null;
+  if (provider === 'anthropic') apiKey = env?.ANTHROPIC_API_KEY ?? null;
+  else if (provider === 'openai') apiKey = env?.OPENAI_API_KEY ?? null;
+  else if (provider === 'google') apiKey = env?.GOOGLE_API_KEY ?? env?.GEMINI_API_KEY ?? null;
+  else if (provider === 'deepseek') apiKey = env?.DEEPSEEK_API_KEY ?? null;
+  return { provider, apiKey, model: modelName };
 }

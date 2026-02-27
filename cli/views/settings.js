@@ -31,6 +31,11 @@ const GOOGLE_MODELS = [
   'gemini-2.5-pro-exp'
 ];
 
+const DEEPSEEK_MODELS = [
+  'deepseek-chat',
+  'deepseek-reasoner'
+];
+
 /**
  * Build the model list based on which API keys are present in .env.
  * Always includes Claude models (forge-tool always uses Claude).
@@ -42,11 +47,13 @@ function buildModelList(envMap) {
     { header: '── Anthropic (forge-tool) ──────────────', models: CLAUDE_MODELS }
   ];
 
-  const hasOpenAI  = Object.keys(envMap).some((k) => /OPENAI/i.test(k));
-  const hasGoogle  = Object.keys(envMap).some((k) => /GOOGLE|GEMINI/i.test(k));
+  const hasOpenAI   = Object.keys(envMap).some((k) => /OPENAI/i.test(k));
+  const hasGoogle   = Object.keys(envMap).some((k) => /GOOGLE|GEMINI/i.test(k));
+  const hasDeepSeek = Object.keys(envMap).some((k) => /DEEPSEEK/i.test(k));
 
-  if (hasOpenAI)  sections.push({ header: '── OpenAI ──────────────────────────────', models: OPENAI_MODELS });
-  if (hasGoogle)  sections.push({ header: '── Google ──────────────────────────────', models: GOOGLE_MODELS });
+  if (hasOpenAI)   sections.push({ header: '── OpenAI ──────────────────────────────', models: OPENAI_MODELS });
+  if (hasGoogle)   sections.push({ header: '── Google ──────────────────────────────', models: GOOGLE_MODELS });
+  if (hasDeepSeek) sections.push({ header: '── DeepSeek ────────────────────────────', models: DEEPSEEK_MODELS });
 
   // Flat list with divider labels (not selectable) interleaved
   const items = [];   // display strings
@@ -132,6 +139,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       case 5: showPromptEditor(screen, config, 'skill', openPopup, closePopup); break;
       case 6: showApiSourceEditor(screen, config, openPopup, closePopup); break;
       case 7: showEnvManager(screen, config, openPopup, closePopup); break;
+      case 8: showModelMatrixEditor(screen, config, openPopup, closePopup, list.refresh); break;
     }
   });
 
@@ -164,9 +172,10 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
     // Detect which API providers have keys
     const providers = [];
-    if (Object.keys(envMap).some((k) => /ANTHROPIC/i.test(k))) providers.push('{green-fg}Anthropic{/green-fg}');
-    if (Object.keys(envMap).some((k) => /OPENAI/i.test(k)))    providers.push('{green-fg}OpenAI{/green-fg}');
+    if (Object.keys(envMap).some((k) => /ANTHROPIC/i.test(k)))  providers.push('{green-fg}Anthropic{/green-fg}');
+    if (Object.keys(envMap).some((k) => /OPENAI/i.test(k)))     providers.push('{green-fg}OpenAI{/green-fg}');
     if (Object.keys(envMap).some((k) => /GOOGLE|GEMINI/i.test(k))) providers.push('{green-fg}Google{/green-fg}');
+    if (Object.keys(envMap).some((k) => /DEEPSEEK/i.test(k)))   providers.push('{green-fg}DeepSeek{/green-fg}');
     const keysSummary = envCount === 0
       ? '{#888888-fg}no keys{/#888888-fg}'
       : `${envCount} key(s)${providers.length ? '  ' + providers.join(' ') : ''}`;
@@ -176,6 +185,11 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     const apiSourceStatus = apiSource
       ? `{green-fg}${apiSource}{/green-fg}`
       : '{yellow-fg}not configured{/yellow-fg}';
+
+    const matrix = cfg.modelMatrix || [];
+    const matrixDisplay = matrix.length > 0
+      ? `{cyan-fg}${matrix.length} model(s): ${matrix.join(', ')}{/cyan-fg}`
+      : '{#888888-fg}not configured (add models to compare){/#888888-fg}';
 
     const row = (num, label, val) =>
       `  {bold}${num}.{/bold} {white-fg}${label.padEnd(22)}{/white-fg}${val}`;
@@ -188,7 +202,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       row('5', 'Agent System Prompt', systemPromptStatus),
       row('6', 'Forge Skill Prompt',  skillStatus),
       row('7', 'API Source',          apiSourceStatus),
-      row('8', 'API Keys / Secrets',  keysSummary)
+      row('8', 'API Keys / Secrets',  keysSummary),
+      row('9', 'Model Matrix',        matrixDisplay)
     ]);
     screen.render();
   };
@@ -513,6 +528,129 @@ function showApiSourceEditor(screen, config, openPopup, closePopup) {
 
   openPopup?.();
   manifestInput.focus();
+  screen.render();
+}
+
+function showModelMatrixEditor(screen, config, openPopup, closePopup, onSave) {
+  const cfg = loadConfig();
+  let matrix = [...(cfg.modelMatrix || [])];
+
+  const container = blessed.box({
+    parent: screen,
+    border: 'line',
+    top: 2,
+    left: 4,
+    right: 4,
+    height: 18,
+    label: ' Model Comparison Matrix ',
+    tags: true
+  });
+
+  blessed.text({
+    parent: container, top: 0, left: 1, tags: true,
+    content: '{#888888-fg}Models run in parallel when "Compare models" is triggered from Tools & Evals.{/#888888-fg}'
+  });
+
+  const modelList = blessed.list({
+    parent: container,
+    top: 2, left: 1, right: 1, height: 10,
+    tags: true, keys: true, vi: true,
+    style: {
+      selected: { bg: '#1a3a5c', fg: 'white' },
+      item: { fg: 'white' }
+    }
+  });
+
+  const statusBar = blessed.box({
+    parent: container, bottom: 2, left: 1, right: 1, height: 1, tags: true
+  });
+
+  const helpBar = blessed.box({
+    parent: container, bottom: 0, left: 1, right: 1, height: 1, tags: true,
+    content: ' {bold}n{/bold} add  {bold}d{/bold} delete  {bold}s{/bold} save  {bold}Escape{/bold} cancel'
+  });
+
+  function renderList() {
+    if (matrix.length === 0) {
+      modelList.setItems(['{#888888-fg}(no models — press n to add){/#888888-fg}']);
+    } else {
+      modelList.setItems(matrix.map((m) => `  ${m}`));
+    }
+    screen.render();
+  }
+
+  renderList();
+
+  modelList.key('n', () => {
+    const envMap = loadEnv();
+    const { items, values } = buildModelList(envMap);
+    const popup = blessed.list({
+      parent: screen,
+      border: 'line',
+      height: Math.min(items.length + 4, 20),
+      width: 54,
+      top: 'center', left: 'center',
+      label: ' Add Model to Matrix ',
+      tags: true, keys: true, vi: true,
+      style: { border: { fg: 'blue' }, selected: { bg: '#1a3a5c', fg: 'white' } },
+      items: items.map((it, i) => values[i] === null ? `  ${it}` : `    ${it}`)
+    });
+    popup.on('select', (item, idx) => {
+      const val = values[idx];
+      if (!val || val === null) return;
+      let modelName = val;
+      if (val === '__custom__') {
+        popup.destroy();
+        const prompt = blessed.prompt({
+          parent: screen, border: 'line', height: 'shrink', width: 'half',
+          top: 'center', left: 'center', label: ' Custom Model ', tags: true, keys: true
+        });
+        prompt.input('Model ID:', '', (err, v) => {
+          if (!err && v?.trim() && !matrix.includes(v.trim())) {
+            matrix.push(v.trim());
+            renderList();
+          }
+          screen.render();
+        });
+        return;
+      }
+      popup.destroy();
+      if (!matrix.includes(modelName)) {
+        matrix.push(modelName);
+        renderList();
+      }
+      modelList.focus();
+      screen.render();
+    });
+    popup.key(['escape', 'q'], () => { popup.destroy(); modelList.focus(); screen.render(); });
+    popup.focus();
+    screen.render();
+  });
+
+  modelList.key('d', () => {
+    const idx = modelList.selected;
+    if (matrix.length === 0 || idx >= matrix.length) return;
+    matrix.splice(idx, 1);
+    renderList();
+  });
+
+  modelList.key('s', () => {
+    cfg.modelMatrix = matrix;
+    saveConfig(cfg);
+    config.modelMatrix = matrix;
+    statusBar.setContent('{green-fg}Saved!{/green-fg}');
+    screen.render();
+    setTimeout(() => {
+      closePopup?.();
+      container.destroy();
+      screen.render();
+      onSave?.();
+    }, 600);
+  });
+
+  openPopup?.();
+  container.key(['escape', 'b'], () => { closePopup?.(); container.destroy(); screen.render(); });
+  modelList.focus();
   screen.render();
 }
 

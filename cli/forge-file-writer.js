@@ -78,6 +78,9 @@ function validateLlmOutput(obj) {
   if (typeof obj.toolFile !== 'string' || obj.toolFile.trim() === '') {
     throw new Error('LLM response missing required string field: toolFile');
   }
+  if (!/mcpRouting/i.test(obj.toolFile)) {
+    throw new Error('toolFile must contain an mcpRouting declaration');
+  }
   if (typeof obj.testFile !== 'string' || obj.testFile.trim() === '') {
     throw new Error('LLM response missing required string field: testFile');
   }
@@ -106,10 +109,11 @@ function buildSystemPrompt(spec, existingTools) {
   const existingStr    = existingTools.length
     ? existingTools.join(', ')
     : '(none)';
+  const paramMapStr    = JSON.stringify(spec.paramMap || {});
 
   return `You are generating a JavaScript tool file for an LLM agent tool-forge project. \
-Generate production-ready code with NO TODOs or stubs, except for the single \
-// EXTENSION POINT comment inside execute() where real API/business logic would go.
+This tool generates the MCP routing layer — a tool definition that points to an internal API \
+endpoint or external data source. Business logic lives behind that endpoint.
 
 Tool spec:
 - Name: ${spec.name}
@@ -122,6 +126,10 @@ Tool spec:
 - Tags: ${tagsStr}
 - Depends on: ${dependsOnStr}
 - Trigger phrases: ${triggersStr}
+- Endpoint target: ${spec.endpointTarget || 'https://your-api.example.com/...'}
+- HTTP method: ${spec.httpMethod || 'GET'}
+- Auth type: ${spec.authType || 'bearer'}
+- Param map: ${paramMapStr}
 
 Existing registered tools (for barrel import reference): ${existingStr}
 
@@ -147,20 +155,18 @@ export const ${_camelName(spec.name)}Tool = {
   dependsOn: ${JSON.stringify(spec.dependsOn ?? [])},
   triggerPhrases: ${JSON.stringify(spec.triggerPhrases ?? [])},
 
-  async execute(params, _context) {
-    // EXTENSION POINT: implement actual logic here
-    // params are validated against schema before this is called
-    return {
-      tool: '${spec.name}',
-      fetchedAt: new Date().toISOString(),
-      data: null
-    };
+  mcpRouting: {
+    // EXTENSION POINT: configure your endpoint here
+    endpoint: '${spec.endpointTarget || 'https://your-api.example.com/...'}',
+    method: '${spec.httpMethod || 'GET'}',
+    auth: '${spec.authType || 'bearer'}',
+    paramMap: ${paramMapStr}
   }
 };
 
 --- TEST FILE FORMAT ---
 The test file must be a JavaScript ESM module using describe/it/expect (Jest or Vitest style).
-It tests the exported tool object — NOT the execute() implementation.
+It tests the exported tool object — NOT any execute() implementation.
 
 import { ${_camelName(spec.name)}Tool } from '../${safeName}.tool.js';
 
@@ -168,15 +174,14 @@ describe('${spec.name}', () => {
   it('has required fields', () => {
     expect(${_camelName(spec.name)}Tool.name).toBe('${spec.name}');
     expect(typeof ${_camelName(spec.name)}Tool.description).toBe('string');
-    expect(typeof ${_camelName(spec.name)}Tool.execute).toBe('function');
+    expect(${_camelName(spec.name)}Tool.mcpRouting).toBeDefined();
   });
   it('schema matches spec', () => {
     // assert each expected schema key is present
   });
-  it('execute returns expected shape', async () => {
-    const result = await ${_camelName(spec.name)}Tool.execute({}, {});
-    expect(result).toHaveProperty('tool', '${spec.name}');
-    expect(result).toHaveProperty('fetchedAt');
+  it('mcpRouting has required shape', () => {
+    expect(typeof ${_camelName(spec.name)}Tool.mcpRouting.endpoint).toBe('string');
+    expect(typeof ${_camelName(spec.name)}Tool.mcpRouting.method).toBe('string');
   });
 });
 

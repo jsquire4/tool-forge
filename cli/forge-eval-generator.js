@@ -128,14 +128,17 @@ function validateAndNormaliseCases(items, toolName, kind) {
  * Build the LLM prompt for golden eval cases.
  *
  * @param {object} spec - Tool specification
+ * @param {{ total: number }} [mix] - Golden mix config
  * @returns {string}
  */
-function buildGoldenPrompt(spec) {
+function buildGoldenPrompt(spec, mix) {
   const triggers = Array.isArray(spec.triggerPhrases) && spec.triggerPhrases.length
     ? spec.triggerPhrases.join(', ')
     : '(none provided)';
 
-  return `Generate 5-8 golden eval cases for the tool '${spec.name}'.
+  const count = mix?.total || 8;
+
+  return `Generate exactly ${count} golden eval cases for the tool '${spec.name}'.
 Description: ${spec.description}
 Trigger phrases: ${triggers}
 
@@ -166,22 +169,30 @@ Respond ONLY with the JSON array — no prose, no markdown outside the JSON bloc
  *
  * @param {object}                    spec      - Tool specification
  * @param {Array<{name:string, description:string}>} allTools  - All tools in registry
+ * @param {{ straightforward: number, ambiguous: number, edge: number, adversarial: number }} [mix]
  * @returns {string}
  */
-function buildLabeledPrompt(spec, allTools) {
+function buildLabeledPrompt(spec, allTools, mix) {
   const toolsListing = allTools.length
     ? allTools.map((t) => `${t.name}: ${t.description}`).join('\n')
     : `${spec.name}: ${spec.description}`;
 
-  return `Generate 4-6 labeled eval cases for '${spec.name}' vs other tools.
+  const straight = mix?.straightforward ?? 3;
+  const ambiguous = mix?.ambiguous ?? 3;
+  const edge = mix?.edge ?? 2;
+  const adversarial = mix?.adversarial ?? 2;
+  const total = straight + ambiguous + edge + adversarial;
+
+  return `Generate exactly ${total} labeled eval cases for '${spec.name}' vs other tools.
 All tools:
 ${toolsListing}
 
 Labeled cases test disambiguation — when the user's intent might match multiple tools or no tool.
-Include:
-- At least one ambiguous case where multiple tool combinations are acceptable
-- At least one edge case (prompt injection attempt, off-topic question, or general knowledge)
-- Varying difficulty: straightforward, ambiguous, edge
+Required distribution:
+- ${straight} straightforward cases (clear intent, single tool)
+- ${ambiguous} ambiguous cases (multiple tools could apply)
+- ${edge} edge cases (prompt injection, off-topic, or general knowledge — use ["__none__"])
+- ${adversarial} adversarial cases (attempts to trick or misuse the tool)
 
 Each case has expect.toolsAcceptable (array of acceptable tool-name arrays).
 Use ["__none__"] for cases where no tool should be called.
@@ -190,7 +201,7 @@ Return a JSON array of eval cases. Each case must have this shape:
 {
   "id": "${spec.name}_labeled_001",
   "description": "brief description of the case",
-  "difficulty": "straightforward" | "ambiguous" | "edge",
+  "difficulty": "straightforward" | "ambiguous" | "edge" | "adversarial",
   "input": { "message": "<user message>" },
   "expect": {
     "toolsAcceptable": [["tool_a"], ["tool_a", "tool_b"]],
@@ -350,7 +361,8 @@ export async function generateEvals({
   allTools = [],
   projectConfig,
   projectRoot,
-  modelConfig
+  modelConfig,
+  evalMix
 }) {
   const evalsDir = projectConfig?.project?.evalsDir || 'docs/examples';
 
@@ -367,8 +379,16 @@ export async function generateEvals({
     ? allTools
     : [{ name: spec.name, description: spec.description }];
 
+  // Resolve mix — prefer explicit arg, then spec.evalMix, then config default, then hardcoded
+  const DEFAULT_MIX = {
+    golden: { total: 10 },
+    labeled: { straightforward: 3, ambiguous: 3, edge: 2, adversarial: 2 }
+  };
+  const configMix = projectConfig?.evals?.defaultMix;
+  const resolvedMix = evalMix || spec.evalMix || configMix || DEFAULT_MIX;
+
   // ── Generate golden cases ──────────────────────────────────────────────
-  const goldenPrompt = buildGoldenPrompt(spec);
+  const goldenPrompt = buildGoldenPrompt(spec, resolvedMix.golden);
   const goldenCases  = await callLlmForCases({
     modelConfig,
     prompt:   goldenPrompt,
@@ -377,7 +397,7 @@ export async function generateEvals({
   });
 
   // ── Generate labeled cases ─────────────────────────────────────────────
-  const labeledPrompt = buildLabeledPrompt(spec, toolsForLabeled);
+  const labeledPrompt = buildLabeledPrompt(spec, toolsForLabeled, resolvedMix.labeled);
   const labeledCases  = await callLlmForCases({
     modelConfig,
     prompt:   labeledPrompt,

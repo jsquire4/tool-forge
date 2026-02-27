@@ -1,3 +1,6 @@
+# Dependencies
+node_modules/
+
 # Transient TUI output — deleted after forge-tool consumes it
 forge-pending-tool.json
 

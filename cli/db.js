@@ -60,7 +60,7 @@ export function getDb(dbPath) {
   try {
     db.exec('ALTER TABLE eval_runs ADD COLUMN skipped INTEGER DEFAULT 0');
   } catch (err) {
-    if (!err.message.includes('duplicate column')) throw err;
+    if (!err.message.includes('duplicate column name')) throw err;
   }
   return db;
 }

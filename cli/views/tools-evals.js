@@ -3,8 +3,8 @@
  */
 
 import blessed from 'blessed';
-import { existsSync } from 'fs';
-import { resolve } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { resolve, dirname } from 'path';
 import { getToolsWithMetadata } from '../tools-scanner.js';
 import { getExistingVerifiers } from '../verifier-scanner.js';
 import { inferOutputGroups, getVerifiersForGroups } from '../output-groups.js';
@@ -187,8 +187,6 @@ async function generateEvalsForTool(tool, config, screen, setStatus, openPopup, 
   screen.render();
 
   try {
-    const { existsSync, readFileSync } = await import('fs');
-    const { resolve } = await import('path');
     const { resolveModelConfig } = await import('../api-client.js');
     const { generateEvals } = await import('../forge-eval-generator.js');
 
@@ -222,8 +220,6 @@ async function generateEvalsForTool(tool, config, screen, setStatus, openPopup, 
     });
 
     // Write files
-    const { writeFileSync, mkdirSync } = await import('fs');
-    const { dirname } = await import('path');
     mkdirSync(dirname(result.goldenPath), { recursive: true });
     writeFileSync(result.goldenPath, JSON.stringify(result.goldenCases, null, 2), 'utf-8');
     writeFileSync(result.labeledPath, JSON.stringify(result.labeledCases, null, 2), 'utf-8');
@@ -266,8 +262,6 @@ async function generateVerifiersForTool(tool, config, screen, setStatus, openPop
   screen.render();
 
   try {
-    const { existsSync, readFileSync } = await import('fs');
-    const { resolve } = await import('path');
     const { resolveModelConfig } = await import('../api-client.js');
     const { generateVerifiers } = await import('../forge-verifier-generator.js');
 
@@ -298,8 +292,6 @@ async function generateVerifiersForTool(tool, config, screen, setStatus, openPop
     });
 
     // Write files
-    const { writeFileSync, mkdirSync } = await import('fs');
-    const { dirname } = await import('path');
     for (const vf of result.verifierFiles) {
       mkdirSync(dirname(vf.path), { recursive: true });
       writeFileSync(vf.path, vf.content, 'utf-8');

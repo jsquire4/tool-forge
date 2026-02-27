@@ -34,8 +34,6 @@ function loadEnv() {
   return out;
 }
 
-// ── Multi-turn API (returns { text, toolCalls: [{name, input}] }) ───────────
-
 const MAX_TOOL_DEPTH = 3;
 
 // ── View ───────────────────────────────────────────────────────────────────
@@ -233,7 +231,9 @@ export function createView({ screen, content, config, navigate, setFooter, scree
       if (provider === 'anthropic') {
         apiMessages.push({ role: 'assistant', content: turn.rawContent });
       } else {
+        if (turn.text) {
         apiMessages.push({ role: 'assistant', content: turn.text });
+      }
       }
     }
   }

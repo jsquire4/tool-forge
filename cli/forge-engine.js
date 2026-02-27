@@ -259,6 +259,8 @@ async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint
 
   if (userInput !== null && userInput !== undefined) {
     newMessages.push({ role: 'user', content: userInput });
+  } else if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+    newMessages.push({ role: 'user', content: '[continue]' });
   }
 
   const fullSystem = retryHint
@@ -280,7 +282,9 @@ async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint
   }
 
   const assistantText = result.text || '';
-  newMessages.push({ role: 'assistant', content: assistantText });
+  if (assistantText) {
+    newMessages.push({ role: 'assistant', content: assistantText });
+  }
 
   return { assistantText, newMessages };
 }
@@ -329,9 +333,10 @@ async function handleSkeptic({ state, userInput, modelConfig, existingTools }) {
   );
 
   // Advance after the user has replied to the skeptic challenge.
-  // "At least one prior assistant turn in skeptic" + a new user reply = advance.
-  const prevAssistantInPhase = state.messages.filter((m) => m.role === 'assistant');
-  const advance = prevAssistantInPhase.length >= 1 && userInput !== null;
+  // Require at least 2 user messages total (one from explore, one from skeptic)
+  // so we don't advance on the first user reply when entering skeptic.
+  const prevUserMessages = state.messages.filter((m) => m.role === 'user');
+  const advance = prevUserMessages.length >= 2 && userInput !== null;
 
   const nextPhase = advance ? 'description' : 'skeptic';
 
@@ -357,12 +362,13 @@ async function handleJsonPhase({
   applySpec,
   nextPhase
 }) {
+  const retryHint = userInput !== null ? null : (state.lastValidationError || null);
   const { assistantText, newMessages } = await callLlm(
     state.messages,
     userInput,
     systemPrompt,
     modelConfig,
-    state.lastValidationError || null
+    retryHint
   );
 
   const extracted = extractJson(assistantText);
@@ -387,15 +393,23 @@ async function handleJsonPhase({
     }
 
     // Too many retries — surface to user, reset retry counter.
+    const exhaustedText = assistantText + '\n\n(Could not extract JSON after 3 attempts — please rephrase or simplify your request.)';
+    const updatedMessages = [...newMessages];
+    for (let i = updatedMessages.length - 1; i >= 0; i--) {
+      if (updatedMessages[i].role === 'assistant') {
+        updatedMessages[i] = { ...updatedMessages[i], content: exhaustedText };
+        break;
+      }
+    }
     return {
       nextState: {
         ...state,
         phase: state.phase,
-        messages: newMessages,
+        messages: updatedMessages,
         retryCount: 0,
         lastValidationError: null
       },
-      assistantText: assistantText + '\n\n(Could not extract JSON after 3 attempts. Please try rephrasing your requirements.)',
+      assistantText: exhaustedText,
       specUpdate: null,
       actions: [],
       phaseChanged: false
@@ -422,15 +436,23 @@ async function handleJsonPhase({
       };
     }
 
+    const validationExhaustedText = assistantText + `\n\n(Validation failed after 3 attempts: ${error} — please rephrase or simplify your request.)`;
+    const updatedValidationMessages = [...newMessages];
+    for (let i = updatedValidationMessages.length - 1; i >= 0; i--) {
+      if (updatedValidationMessages[i].role === 'assistant') {
+        updatedValidationMessages[i] = { ...updatedValidationMessages[i], content: validationExhaustedText };
+        break;
+      }
+    }
     return {
       nextState: {
         ...state,
         phase: state.phase,
-        messages: newMessages,
+        messages: updatedValidationMessages,
         retryCount: 0,
         lastValidationError: null
       },
-      assistantText: assistantText + `\n\n(Validation failed after 3 attempts: ${error})`,
+      assistantText: validationExhaustedText,
       specUpdate: null,
       actions: [],
       phaseChanged: false

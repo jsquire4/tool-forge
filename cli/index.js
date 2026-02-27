@@ -72,9 +72,17 @@ async function main() {
     rl.close();
 
     const projectRoot = findProjectRoot();
-    const config = existsSync(resolve(projectRoot, CONFIG_FILE))
-      ? JSON.parse(readFileSync(resolve(projectRoot, CONFIG_FILE), 'utf-8'))
-      : { project: {} };
+    let config;
+    if (existsSync(resolve(projectRoot, CONFIG_FILE))) {
+      try {
+        config = JSON.parse(readFileSync(resolve(projectRoot, CONFIG_FILE), 'utf-8'));
+      } catch (err) {
+        console.error('Error reading forge.config.json:', err.message);
+        config = {};
+      }
+    } else {
+      config = { project: {} };
+    }
 
     const pendingSpec = {
       _source: 'forge-api-tui',

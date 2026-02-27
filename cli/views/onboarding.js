@@ -149,8 +149,18 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     padding: { top: 0, left: 2 }
   });
 
+  const statusBar = blessed.box({
+    top: '100%-1',
+    left: 0,
+    width: '100%',
+    height: 1,
+    tags: true,
+    style: { fg: '#888888' }
+  });
+
   content.append(titleBox);
   content.append(list);
+  content.append(statusBar);
 
   setFooter(' {bold}↑↓{/bold} navigate  {bold}Enter{/bold} select  {bold}b{/bold} skip setup');
 
@@ -246,10 +256,14 @@ export function createView({ screen, content, config, navigate, setFooter, scree
           }
 
           envMap[keyName] = keyValue;
-          saveEnv(envMap);
-
-          chosen.provider = detectApiKeyProvider(envMap) || keyName.toLowerCase().split('_')[0];
-          completed[0] = true;
+          try {
+            saveEnv(envMap);
+            chosen.provider = detectApiKeyProvider(envMap) || keyName.toLowerCase().split('_')[0];
+            completed[0] = true;
+          } catch (err) {
+            statusBar.setContent(`{red-fg}⚠ Could not save .env: ${err.message}{/red-fg}`);
+            screen.render();
+          }
         }
 
         renderList();
@@ -370,7 +384,14 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     }
 
     modelList.on('select', (item, idx) => applyModel(idx));
-    modelList.key(['escape', 'b'], () => {
+    modelList.key(['escape'], () => {
+      closePopup?.();
+      popup.destroy();
+      renderList();
+      list.focus();
+      screen.render();
+    });
+    popup.key('b', () => {
       closePopup?.();
       popup.destroy();
       renderList();

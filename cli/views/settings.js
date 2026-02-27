@@ -692,8 +692,8 @@ function showEnvManager(screen, config, openPopup, closePopup) {
     }
   }
 
-  container.key(['escape'], closeEnvManager);
-  table.key(['escape'], closeEnvManager);
+  container.key(['escape', 'b'], closeEnvManager);
+  table.key(['escape', 'b'], closeEnvManager);
 
   table.focus();
   screen.render();

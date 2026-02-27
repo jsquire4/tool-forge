@@ -139,11 +139,12 @@ async function callLlmForVerifier({ modelConfig, prompt, toolName, verifierName,
       continue;
     }
 
-    // Minimal validation: the response must contain the export keyword and the verifier name
-    if (!responseText.includes('export') || !responseText.includes(verifierName)) {
+    // Minimal validation: the response must contain the export keyword and the camelCase verifier name
+    const camelVerifier = _camelCase(verifierName) + 'Verifier';
+    if (!responseText.includes('export') || !responseText.includes(camelVerifier)) {
       lastError = new Error(
         `Attempt ${attempt}/${maxRetries}: LLM response does not look like a valid verifier file ` +
-        `(missing 'export' or '${verifierName}')`
+        `(missing 'export' or '${camelVerifier}')`
       );
       messages.push({ role: 'assistant', content: responseText });
       messages.push({
@@ -177,10 +178,9 @@ async function callLlmForVerifier({ modelConfig, prompt, toolName, verifierName,
  *
  * @param {string} verifierName  - e.g. 'source_attribution'
  * @param {string} toolName      - e.g. 'get_weather'
- * @param {string} verifiersDir  - Absolute path to verifiers directory
  * @returns {string} e.g. "export { sourceAttributionVerifier } from './get_weather.source_attribution.verifier.js';"
  */
-function buildBarrelLine(verifierName, toolName, verifiersDir) {
+function buildBarrelLine(verifierName, toolName) {
   const camelVerifier  = _camelCase(verifierName);
   const fileName       = `${toolName}.${verifierName}.verifier.js`;
   // Barrel line uses a relative path (relative to the barrel file in the same dir)
@@ -244,12 +244,13 @@ export async function generateVerifiers({
 
   // ── Generate a stub file for each verifier ─────────────────────────────
   const verifierFiles = [];
+  const safeName = (spec.name || 'unnamed').replace(/[^a-zA-Z0-9_-]/g, '_');
 
   for (let i = 0; i < verifierNames.length; i++) {
     const verifierName = verifierNames[i];
     const orderStr     = defaultOrder(verifierName, i);
-    const filePath     = `${absVerifiersDir}/${spec.name}.${verifierName}.verifier.js`;
-    const barrelLine   = buildBarrelLine(verifierName, spec.name, absVerifiersDir);
+    const filePath     = `${absVerifiersDir}/${safeName}.${verifierName}.verifier.js`;
+    const barrelLine   = buildBarrelLine(verifierName, safeName);
 
     const prompt  = buildVerifierPrompt(spec, verifierName, orderStr);
     const content = await callLlmForVerifier({

@@ -261,8 +261,9 @@ export async function generateToolFiles({
     ? toolsDir
     : `${projectRoot}/${toolsDir}`;
 
-  const toolFilePath  = `${absToolsDir}/${spec.name}.tool.js`;
-  const testFilePath  = `${absToolsDir}/__tests__/${spec.name}.tool.test.js`;
+  const safeName      = (spec.name || 'unnamed').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const toolFilePath  = `${absToolsDir}/${safeName}.tool.js`;
+  const testFilePath  = `${absToolsDir}/__tests__/${safeName}.tool.test.js`;
   const barrelPath    = `${absToolsDir}/index.js`;
 
   const systemPrompt = buildSystemPrompt(spec, existingTools);

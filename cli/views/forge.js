@@ -73,6 +73,7 @@ export function createView({
 
   let forgeState = createInitialState();
   let busy = false;
+  let previewPending = false;
   let currentModelConfig = null;
   let db = null;
   let updateToolGenerationFn = null;
@@ -116,6 +117,7 @@ export function createView({
 
   // ── File preview popup ─────────────────────────────────────────────────
   function showFilePreview(files) {
+    previewPending = true;
     const lines = [];
     for (const key of ['toolFile', 'testFile']) {
       const f = files[key];
@@ -153,6 +155,7 @@ export function createView({
 
     popup.key('y', async () => {
       closePreview();
+      previewPending = false;
       try {
         if (files.toolFile) {
           mkdirSync(dirname(files.toolFile.path), { recursive: true });
@@ -182,11 +185,17 @@ export function createView({
 
     popup.key('n', () => {
       closePreview();
+      previewPending = false;
       appendSystem("File write aborted. Describe changes and I'll regenerate.");
     });
 
     popup.key('e', async () => {
-      if (!files.toolFile?.path) return;
+      if (!files.toolFile?.path) {
+        previewPending = false;
+        closePreview();
+        appendSystem('No tool file path to open in editor.');
+        return;
+      }
       const { spawn } = await import('child_process');
       screen.program.disableMouse();
       screen.program.normalBuffer();
@@ -194,11 +203,12 @@ export function createView({
       child.on('exit', () => {
         screen.program.alternateBuffer();
         screen.program.enableMouse();
+        previewPending = false;
         closePreview();
       });
     });
 
-    popup.key(['escape', 'b'], () => { closePreview(); appendSystem('File preview closed.'); });
+    popup.key(['escape', 'b'], () => { closePreview(); previewPending = false; appendSystem('File preview closed.'); });
   }
 
   // ── Action handler ─────────────────────────────────────────────────────
@@ -274,7 +284,9 @@ export function createView({
     setStatus('');
     busy = false;
     screen.render();
-    inputBox.focus();
+    if (!previewPending) {
+      inputBox.focus();
+    }
   }
 
   // ── Init ───────────────────────────────────────────────────────────────
@@ -351,10 +363,12 @@ export function createView({
 
   screenKey('s', () => {
     if (screen.focused === inputBox) return;
+    if (busy) return;
     doStep('skip');
   });
 
   screenKey('m', () => {
+    if (busy) return;
     config._forgeState = forgeState;
     config._forgeInput = null;
     navigate('model-compare');

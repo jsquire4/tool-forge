@@ -134,7 +134,7 @@ function buildItems(stats) {
   ];
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey, startService }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
   const container = blessed.box({
     top: 0,
     left: 0,

@@ -293,7 +293,7 @@ function showModelSelector(screen, config, openPopup, closePopup, role = 'genera
         if (!err && val && val.trim()) {
           cfg.models = cfg.models || {};
           cfg.models[role] = val.trim();
-          saveConfig(cfg);
+          try { saveConfig(cfg); } catch (_) { screen.render(); return; }
           if (!config.models) config.models = {};
           config.models[role] = val.trim();
           if (role === 'generation') config.model = val.trim();
@@ -304,7 +304,7 @@ function showModelSelector(screen, config, openPopup, closePopup, role = 'genera
     }
     cfg.models = cfg.models || {};
     cfg.models[role] = val;
-    saveConfig(cfg);
+    try { saveConfig(cfg); } catch (_) { screen.render(); return; }
     if (!config.models) config.models = {};
     config.models[role] = val;
     // Backwards compat: also update config.model for generation role
@@ -402,7 +402,7 @@ function showPromptEditor(screen, config, type, openPopup, closePopup) {
     prompt.input('Enter path to system prompt file:', cfg.systemPromptPath || '', (err, val) => {
       if (!err && val) {
         cfg.systemPromptPath = val;
-        saveConfig(cfg);
+        try { saveConfig(cfg); } catch (_) { screen.render(); return; }
         config.systemPromptPath = val;
         // Reload the file content in the box
         const newPath = resolve(PROJECT_ROOT, val);

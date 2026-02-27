@@ -33,7 +33,10 @@ async function loadData(config) {
         driftMap[a.tool_name] = a;
       }
     }
-  } catch (_) { /* sqlite not available */ }
+  } catch (err) {
+    // DB unavailable or schema mismatch — tools still display, just without eval/registry data
+    console.error('[tools-evals] DB load failed:', err.message);
+  }
 
   return tools.map((t) => {
     const groups = inferOutputGroups(t);

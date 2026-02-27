@@ -253,6 +253,13 @@ function validateEvalMix(json) {
     return { valid: false, error: 'evalMix.labeled must be an object.' };
   }
 
+  const labeledFields = ['straightforward', 'ambiguous', 'edge', 'adversarial'];
+  for (const f of labeledFields) {
+    if (evalMix.labeled[f] !== undefined && typeof evalMix.labeled[f] !== 'number') {
+      return { valid: false, error: `evalMix.labeled.${f} must be a number.` };
+    }
+  }
+
   return { valid: true, error: null };
 }
 

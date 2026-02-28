@@ -16,9 +16,12 @@
 
 import { createServer } from 'net';
 import { createServer as createHttpServer } from 'http';
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { getDb } from './db.js';
+import { createMcpServer } from './mcp-server.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -33,6 +36,51 @@ let lastActivity = Date.now();
 const queue = [];
 let working = false;
 const waiters = []; // pending /next long-poll response objects
+
+// MCP runtime state — initialized in main() after config and lock are ready
+let forgeMcpKey = null;  // null = unset = fail-closed
+let mcpServer = null;
+
+/**
+ * Parse a .env file into a key=value object.
+ * Skips blank lines and comments. Strips surrounding quotes from values.
+ * @param {string} envPath
+ * @returns {Record<string, string>}
+ */
+function loadDotEnv(envPath) {
+  if (!existsSync(envPath)) return {};
+  const lines = readFileSync(envPath, 'utf-8').split('\n');
+  const out = {};
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let val = trimmed.slice(eqIdx + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    out[key] = val;
+  }
+  return out;
+}
+
+/**
+ * Read forge.config.json from project root. Returns {} on any error.
+ * @returns {object}
+ */
+function loadConfig() {
+  const configPath = resolve(PROJECT_ROOT, 'forge.config.json');
+  if (!existsSync(configPath)) return {};
+  try {
+    return JSON.parse(readFileSync(configPath, 'utf-8'));
+  } catch (err) {
+    process.stderr.write(`[forge-service] Could not parse forge.config.json: ${err.message}\n`);
+    return {};
+  }
+}
 
 function getPort() {
   return new Promise((res, rej) => {
@@ -85,6 +133,31 @@ function drainWaiters() {
 
 const server = createHttpServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+
+  // ── /mcp route — MCP protocol via StreamableHTTP ────────────────────────
+  if (url.pathname.startsWith('/mcp')) {
+    const authHeader = req.headers['authorization'] || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    // Fail-closed: unset key, empty key, missing token, or wrong token → 401
+    if (!forgeMcpKey || !token || token !== forgeMcpKey) {
+      json(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+    if (!mcpServer) {
+      json(res, 503, { error: 'MCP server not initialized' });
+      return;
+    }
+    try {
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      await mcpServer.connect(transport);
+      const parsedBody = await readBody(req);
+      await transport.handleRequest(req, res, parsedBody);
+    } catch (err) {
+      process.stderr.write(`[forge-service] MCP handler error: ${err.message}\n`);
+      if (!res.headersSent) json(res, 500, { error: 'Internal error' });
+    }
+    return;
+  }
 
   if (req.method === 'GET' && url.pathname === '/health') {
     json(res, 200, {
@@ -182,6 +255,26 @@ async function main() {
   server.listen(port, '127.0.0.1', () => {
     writeLock(port);
     process.stdout.write(`forge-service started on port ${port}\n`);
+
+    // Load config and .env after lock is written
+    const config = loadConfig();
+    const env = loadDotEnv(resolve(PROJECT_ROOT, '.env'));
+
+    // FORGE_MCP_KEY: check .env file first, then process.env
+    // Empty string is treated as unset (fail-closed)
+    const rawKey = env.FORGE_MCP_KEY ?? process.env.FORGE_MCP_KEY ?? '';
+    forgeMcpKey = rawKey.trim() || null;
+
+    // Initialize DB and MCP server; if either fails, log and continue without MCP
+    try {
+      const dbPath = resolve(PROJECT_ROOT, config.dbPath || 'forge.db');
+      const db = getDb(dbPath);
+      mcpServer = createMcpServer(db, config);
+      process.stdout.write('[forge-service] MCP server initialized\n');
+    } catch (err) {
+      process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);
+      mcpServer = null;
+    }
   });
 }
 

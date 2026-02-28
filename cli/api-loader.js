@@ -156,6 +156,71 @@ function mergeEndpoints(...arrays) {
 }
 
 /**
+ * Safe JSON.parse — returns null on failure.
+ * @param {string} str
+ * @returns {object|null}
+ */
+function safeParseJson(str) {
+  try { return JSON.parse(str); } catch { return null; }
+}
+
+/**
+ * Normalize a path for comparison: ensure leading slash, trim trailing slash, lowercase.
+ * @param {string} p
+ * @returns {string}
+ */
+function normalizePath(p) {
+  if (!p) return '';
+  const withSlash = p.startsWith('/') ? p : `/${p}`;
+  return withSlash.replace(/\/$/, '').toLowerCase();
+}
+
+/**
+ * Compute API coverage: which spec endpoints have a promoted tool with a matching
+ * mcpRouting.endpoint (path) and mcpRouting.method.
+ *
+ * Matching is path+method, case-insensitive, path-only (no base URL).
+ *
+ * @param {object|null} spec - Parsed OpenAPI spec object
+ * @param {import('better-sqlite3').Database} db
+ * @returns {{ covered: ApiEndpoint[]; uncovered: ApiEndpoint[]; total: number }}
+ */
+export function computeCoverage(spec, db) {
+  if (!spec?.paths) return { covered: [], uncovered: [], total: 0 };
+
+  const endpoints = parseOpenApiPaths(spec);
+
+  const promotedRows = db.prepare(
+    `SELECT spec_json FROM tool_registry WHERE lifecycle_state = 'promoted'`
+  ).all();
+
+  // Build a set of "METHOD:normalizedPath" keys from promoted tools
+  const coveredKeys = new Set();
+  for (const row of promotedRows) {
+    const toolSpec = safeParseJson(row.spec_json);
+    if (!toolSpec?.mcpRouting?.endpoint) continue;
+    const path = normalizePath(toolSpec.mcpRouting.endpoint);
+    const method = (toolSpec.mcpRouting.method || '').toUpperCase();
+    if (!path || !method) continue;
+    coveredKeys.add(`${method}:${path}`);
+  }
+
+  const covered = [];
+  const uncovered = [];
+
+  for (const endpoint of endpoints) {
+    const key = `${endpoint.method.toUpperCase()}:${normalizePath(endpoint.path)}`;
+    if (coveredKeys.has(key)) {
+      covered.push(endpoint);
+    } else {
+      uncovered.push(endpoint);
+    }
+  }
+
+  return { covered, uncovered, total: endpoints.length };
+}
+
+/**
  * Load all APIs from config.
  * @param {object} config - forge.config.json api section
  * @returns {Promise<ApiEndpoint[]>}

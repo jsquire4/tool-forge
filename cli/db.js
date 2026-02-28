@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS model_comparisons (
   chosen_model TEXT,
   phase TEXT
 );
+
+CREATE TABLE IF NOT EXISTS mcp_call_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool_name   TEXT NOT NULL,
+  called_at   TEXT NOT NULL,
+  input_json  TEXT,
+  output_json TEXT,
+  status_code INTEGER,
+  latency_ms  INTEGER,
+  error       TEXT
+);
 `;
 
 /**
@@ -502,4 +513,43 @@ export function getModelComparisonData(db, toolName) {
     GROUP BY model
     ORDER BY (passed * 1.0 / COUNT(*)) DESC
   `).all(toolName);
+}
+
+// ── mcp_call_log ───────────────────────────────────────────────────────────
+
+/**
+ * Insert a record into mcp_call_log. called_at defaults to current ISO timestamp.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ tool_name: string; input_json?: string; output_json?: string; status_code?: number; latency_ms?: number; error?: string }} row
+ * @returns {number} lastInsertRowid
+ */
+export function insertMcpCallLog(db, row) {
+  const result = db.prepare(`
+    INSERT INTO mcp_call_log (tool_name, called_at, input_json, output_json, status_code, latency_ms, error)
+    VALUES (@tool_name, @called_at, @input_json, @output_json, @status_code, @latency_ms, @error)
+  `).run({
+    tool_name: row.tool_name,
+    called_at: new Date().toISOString(),
+    input_json: row.input_json ?? null,
+    output_json: row.output_json ?? null,
+    status_code: row.status_code ?? null,
+    latency_ms: row.latency_ms ?? null,
+    error: row.error ?? null
+  });
+  return result.lastInsertRowid;
+}
+
+/**
+ * Get mcp_call_log rows for a specific tool, or all rows if toolName is null.
+ * Ordered by id DESC (most recent first).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string|null} toolName - null = all tools
+ * @param {number} [limit=50]
+ * @returns {object[]}
+ */
+export function getMcpCallLog(db, toolName = null, limit = 50) {
+  if (toolName == null) {
+    return db.prepare(`SELECT * FROM mcp_call_log ORDER BY id DESC LIMIT ?`).all(limit);
+  }
+  return db.prepare(`SELECT * FROM mcp_call_log WHERE tool_name = ? ORDER BY id DESC LIMIT ?`).all(toolName, limit);
 }

@@ -9,11 +9,19 @@
     "start": "node cli/index.js",
     "forge": "node cli/index.js",
     "manual": "node cli/index.js --manual",
-    "service": "node cli/forge-service.js"
+    "service": "node cli/forge-service.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^12.6.2",
     "blessed": "^0.1.81",
     "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0",
+    "@vitest/coverage-v8": "^2.0.0"
   }
 }

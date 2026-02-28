@@ -25,7 +25,7 @@ function loadConfig() {
   const projectRoot = findProjectRoot();
   const configPath = resolve(projectRoot, CONFIG_FILE);
   if (!existsSync(configPath)) {
-    console.error(`No ${CONFIG_FILE} found in ${projectRoot}. Create one from config/forge.config.template.json`);
+    console.error(`No ${CONFIG_FILE} found in ${projectRoot}.\nRun "forge init" to set up your project, or create one from config/forge.config.template.json`);
     process.exit(1);
   }
   const raw = readFileSync(configPath, 'utf-8');
@@ -64,6 +64,13 @@ async function main() {
   process.chdir(findProjectRoot());
 
   const args = process.argv.slice(2);
+
+  if (args[0] === 'init') {
+    const { runInit } = await import('./init.js');
+    await runInit();
+    return;
+  }
+
   const manualOnly = args.includes('--manual') || args.includes('-m');
 
   if (manualOnly) {

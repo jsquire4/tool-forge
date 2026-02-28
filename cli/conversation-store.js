@@ -39,8 +39,8 @@ export class SqliteConversationStore {
 
     // Prepare statements once to avoid repeated compilation
     this._stmtInsert = db.prepare(`
-      INSERT INTO conversations (session_id, stage, role, content, created_at)
-      VALUES (@session_id, @stage, @role, @content, @created_at)
+      INSERT INTO conversations (session_id, stage, role, content, agent_id, created_at)
+      VALUES (@session_id, @stage, @role, @content, @agent_id, @created_at)
     `);
     this._stmtHistory = db.prepare(`
       SELECT * FROM conversations WHERE session_id = ? ORDER BY created_at ASC
@@ -64,12 +64,13 @@ export class SqliteConversationStore {
     return randomUUID();
   }
 
-  async persistMessage(sessionId, stage, role, content) {
+  async persistMessage(sessionId, stage, role, content, agentId = null) {
     this._stmtInsert.run({
       session_id: sessionId,
       stage,
       role,
       content,
+      agent_id: agentId ?? null,
       created_at: new Date().toISOString()
     });
   }
@@ -129,7 +130,7 @@ export class RedisConversationStore {
     return randomUUID();
   }
 
-  async persistMessage(sessionId, stage, role, content) {
+  async persistMessage(sessionId, stage, role, content, agentId = null) {
     const client = await this._connect();
     const msgKey = `forge:conv:${sessionId}:msgs`;
 
@@ -138,6 +139,7 @@ export class RedisConversationStore {
       stage,
       role,
       content,
+      agent_id: agentId ?? null,
       created_at: new Date().toISOString()
     });
 

@@ -22,7 +22,7 @@ import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
 /**
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
- * @param {object} ctx — { auth, hitlEngine, promptStore, preferenceStore, conversationStore, db, config, env }
+ * @param {object} ctx — { auth, hitlEngine, promptStore, preferenceStore, conversationStore, db, config, env, agentRegistry, verifierRunner }
  */
 export async function handleChatResume(req, res, ctx) {
   const { auth, hitlEngine } = ctx;
@@ -59,18 +59,30 @@ export async function handleChatResume(req, res, ctx) {
     return;
   }
 
-  // 5. Resume the ReAct loop
-  const { preferenceStore, promptStore, conversationStore, db, config, env } = ctx;
+  // 5. Recover agent from pause state (graceful degradation if agent gone)
+  const { preferenceStore, promptStore, conversationStore, db, config, env, agentRegistry } = ctx;
   const userId = authResult.userId;
   let userJwt = (req.headers.authorization ?? '').slice(7) || null;
   if (!userJwt && req.url) {
     try { userJwt = new URL(req.url, 'http://localhost').searchParams.get('token') || null; } catch { /* malformed URL */ }
   }
-  const effective = preferenceStore.resolveEffective(userId, config, env);
-  const systemPrompt = promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.';
 
-  // Load promoted tools
-  const { toolRows, tools } = loadPromotedTools(db);
+  let agent = null;
+  if (agentRegistry && pausedState.agentId) {
+    agent = agentRegistry.resolveAgent(pausedState.agentId);
+    // If agent no longer exists/disabled, fall back to base config (graceful degradation)
+  }
+
+  const scopedConfig = agentRegistry ? agentRegistry.buildAgentConfig(config, agent) : config;
+  const effective = preferenceStore.resolveEffective(userId, scopedConfig, env);
+  const systemPrompt = agentRegistry
+    ? agentRegistry.resolveSystemPrompt(agent, promptStore, scopedConfig)
+    : (promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.');
+
+  // Load promoted tools with agent allowlist
+  const allowlist = agent?.tool_allowlist ?? '*';
+  const parsedAllowlist = (allowlist !== '*') ? (() => { try { return JSON.parse(allowlist); } catch { return '*'; } })() : '*';
+  const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
 
   // Start SSE
   const sse = initSSE(res);
@@ -113,9 +125,9 @@ export async function handleChatResume(req, res, ctx) {
       systemPrompt,
       tools,
       messages: pausedState.conversationMessages ?? [],
-      maxTurns: config.maxTurns ?? 10,
-      maxTokens: config.maxTokens ?? 4096,
-      forgeConfig: config,
+      maxTurns: scopedConfig.maxTurns ?? 10,
+      maxTokens: scopedConfig.maxTokens ?? 4096,
+      forgeConfig: scopedConfig,
       db,
       userJwt,
       hooks
@@ -123,10 +135,30 @@ export async function handleChatResume(req, res, ctx) {
 
     let assistantText = '';
     for await (const event of gen) {
+      // Handle nested HITL pauses during resume
+      if (event.type === 'hitl' && hitlEngine) {
+        const resumeToken = await hitlEngine.pause({
+          sessionId: pausedState.sessionId,
+          agentId: agent?.agent_id ?? pausedState.agentId ?? null,
+          conversationMessages: event.conversationMessages,
+          pendingToolCalls: event.pendingToolCalls,
+          turnIndex: event.turnIndex,
+          tool: event.tool,
+          args: event.args
+        });
+        sse.send('hitl', {
+          type: 'hitl',
+          tool: event.tool,
+          message: event.message,
+          resumeToken
+        });
+        continue;
+      }
+
       sse.send(event.type, event);
       if (event.type === 'text') assistantText += event.content;
       if (event.type === 'done' && assistantText && pausedState.sessionId) {
-        await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText);
+        await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
       }
     }
   } catch (err) {
@@ -135,4 +167,3 @@ export async function handleChatResume(req, res, ctx) {
 
   sse.close();
 }
-

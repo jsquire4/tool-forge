@@ -36,6 +36,8 @@ import { handleAdminConfig } from './handlers/admin.js';
 import { handleGetPreferences, handlePutPreferences } from './handlers/preferences.js';
 import { createDriftMonitor } from './drift-background.js';
 import { VerifierRunner } from './verifier-runner.js';
+import { makeAgentRegistry } from './agent-registry.js';
+import { handleAgents } from './handlers/agents.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -280,6 +282,9 @@ const server = createHttpServer(async (req, res) => {
       if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
       if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
     }
+    if (url.pathname.startsWith('/forge-admin/agents')) {
+      return handleAgents(req, res, sidecarCtx);
+    }
     if (url.pathname.startsWith('/forge-admin/config')) {
       return handleAdminConfig(req, res, sidecarCtx);
     }
@@ -376,7 +381,18 @@ async function main() {
       const conversationStore = makeConversationStore(config, mcpDb);
       const hitlEngine = makeHitlEngine(config, mcpDb);
       const verifierRunner = new VerifierRunner(mcpDb, config);
-      sidecarCtx = { auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, db: mcpDb, config, env };
+      const agentRegistry = makeAgentRegistry(config, mcpDb);
+      // Seed agents from config.agents[] if defined
+      try {
+        agentRegistry.seedFromConfig();
+        const allAgents = agentRegistry.getAllAgents();
+        if (allAgents.length > 0) {
+          process.stdout.write(`[forge-service] Agent registry seeded: ${allAgents.length} agent(s)\n`);
+        }
+      } catch (err) {
+        process.stderr.write(`[forge-service] Agent seeding failed: ${err.message}\n`);
+      }
+      sidecarCtx = { auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, agentRegistry, db: mcpDb, config, env };
       process.stdout.write('[forge-service] Sidecar context initialized\n');
     } catch (err) {
       process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);

@@ -7,7 +7,7 @@
  * Request:
  *   POST /agent-api/chat
  *   Header: Authorization: Bearer <userJwt>
- *   Body: { message: string, sessionId?: string }
+ *   Body: { message: string, sessionId?: string, agentId?: string }
  *
  * Response: SSE stream of ReactEvent objects
  */
@@ -19,10 +19,10 @@ import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
 /**
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
- * @param {object} ctx — { auth, promptStore, preferenceStore, conversationStore, db, config, env, hooks }
+ * @param {object} ctx — { auth, promptStore, preferenceStore, conversationStore, db, config, env, agentRegistry, hitlEngine, verifierRunner }
  */
 export async function handleChat(req, res, ctx) {
-  const { auth, promptStore, preferenceStore, conversationStore, db, config, env } = ctx;
+  const { auth, promptStore, preferenceStore, conversationStore, db, config, env, agentRegistry } = ctx;
 
   // 1. Authenticate
   const authResult = auth.authenticate(req);
@@ -43,21 +43,37 @@ export async function handleChat(req, res, ctx) {
     return;
   }
 
-  // 3. Resolve user preferences
-  const effective = preferenceStore.resolveEffective(userId, config, env);
+  // 3. Resolve agent
+  const requestedAgentId = body.agentId || null;
+  let agent = null;
+  if (agentRegistry) {
+    agent = agentRegistry.resolveAgent(requestedAgentId);
+    if (requestedAgentId && !agent) {
+      sendJson(res, 404, { error: `Agent "${requestedAgentId}" not found or disabled` });
+      return;
+    }
+  }
 
-  // 4. Get system prompt
-  const systemPrompt = promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.';
+  // 4. Build agent-scoped config
+  const scopedConfig = agentRegistry ? agentRegistry.buildAgentConfig(config, agent) : config;
 
-  // 5. Session management
+  // 5. Resolve user preferences against scoped config
+  const effective = preferenceStore.resolveEffective(userId, scopedConfig, env);
+
+  // 6. Get system prompt (agent → global → config → fallback)
+  const systemPrompt = agentRegistry
+    ? agentRegistry.resolveSystemPrompt(agent, promptStore, scopedConfig)
+    : (promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.');
+
+  // 7. Session management
   let sessionId = body.sessionId;
   if (!sessionId) {
     sessionId = conversationStore.createSession();
   }
 
-  // 6. Load history
+  // 8. Load history
   const rawHistory = await conversationStore.getHistory(sessionId);
-  const window = config.conversation?.window ?? 25;
+  const window = scopedConfig.conversation?.window ?? 25;
   const history = rawHistory.slice(-window).map(row => ({
     role: row.role,
     content: row.content
@@ -67,18 +83,22 @@ export async function handleChat(req, res, ctx) {
   const messages = [...history, { role: 'user', content: body.message }];
 
   // Persist user message
-  await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message);
+  await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
 
-  // 7. Load promoted tools
-  const { toolRows, tools } = loadPromotedTools(db);
+  // 9. Load promoted tools (with agent allowlist filtering)
+  const allowlist = agent?.tool_allowlist ?? '*';
+  const parsedAllowlist = (allowlist !== '*') ? (() => { try { return JSON.parse(allowlist); } catch { return '*'; } })() : '*';
+  const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
 
-  // 8. Start SSE stream
+  // 10. Start SSE stream
   const sse = initSSE(res);
 
-  // Send session info
-  sse.send('session', { sessionId });
+  // Send session info (include agentId for client correlation)
+  const sessionEvent = { sessionId };
+  if (agent) sessionEvent.agentId = agent.agent_id;
+  sse.send('session', sessionEvent);
 
-  // 9. Build per-request hooks
+  // 11. Build per-request hooks
   const { hitlEngine, verifierRunner } = ctx;
   if (verifierRunner) {
     try { await verifierRunner.loadFromDb(db); } catch { /* non-fatal */ }
@@ -107,7 +127,7 @@ export async function handleChat(req, res, ctx) {
     }
   };
 
-  // 10. Run ReAct loop
+  // 12. Run ReAct loop
   try {
     const gen = reactLoop({
       provider: effective.provider,
@@ -116,9 +136,9 @@ export async function handleChat(req, res, ctx) {
       systemPrompt,
       tools,
       messages,
-      maxTurns: config.maxTurns ?? 10,
-      maxTokens: config.maxTokens ?? 4096,
-      forgeConfig: config,
+      maxTurns: scopedConfig.maxTurns ?? 10,
+      maxTokens: scopedConfig.maxTokens ?? 4096,
+      forgeConfig: scopedConfig,
       db,
       userJwt,
       hooks
@@ -126,6 +146,26 @@ export async function handleChat(req, res, ctx) {
 
     let assistantText = '';
     for await (const event of gen) {
+      // HITL fix: intercept hitl events, persist pause state, attach resumeToken
+      if (event.type === 'hitl' && hitlEngine) {
+        const resumeToken = await hitlEngine.pause({
+          sessionId,
+          agentId: agent?.agent_id ?? null,
+          conversationMessages: event.conversationMessages,
+          pendingToolCalls: event.pendingToolCalls,
+          turnIndex: event.turnIndex,
+          tool: event.tool,
+          args: event.args
+        });
+        sse.send('hitl', {
+          type: 'hitl',
+          tool: event.tool,
+          message: event.message,
+          resumeToken
+        });
+        continue;
+      }
+
       sse.send(event.type, event);
 
       // Accumulate assistant text for persistence
@@ -135,7 +175,7 @@ export async function handleChat(req, res, ctx) {
 
       // Persist on completion
       if (event.type === 'done' && assistantText) {
-        await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText);
+        await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id);
       }
     }
   } catch (err) {
@@ -144,4 +184,3 @@ export async function handleChat(req, res, ctx) {
 
   sse.close();
 }
-

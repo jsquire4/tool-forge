@@ -9,6 +9,7 @@
  *   endpoint — Base URL for the agent API (required)
  *   theme    — "light" or "dark" (default: "light")
  *   token    — JWT token for auth (optional, can also be set via setToken())
+ *   agent    — Agent ID to route chat requests to a specific agent (optional)
  *
  * Custom events:
  *   forge:message    — { detail: { role, content } }
@@ -28,7 +29,7 @@ class ForgeChat extends HTMLElement {
   }
 
   static get observedAttributes() {
-    return ['endpoint', 'theme', 'token'];
+    return ['endpoint', 'theme', 'token', 'agent'];
   }
 
   connectedCallback() {
@@ -256,7 +257,7 @@ class ForgeChat extends HTMLElement {
       </style>
       <div class="forge-chat" role="region" aria-label="Chat">
         <div class="forge-header">
-          <span>Forge Chat</span>
+          <span>${this.getAttribute('agent') ? `Forge Chat — ${this._escapeHtml(this.getAttribute('agent'))}` : 'Forge Chat'}</span>
           <button id="prefs-btn" aria-label="Open preferences" title="Preferences">&#9881;</button>
         </div>
         <div class="forge-messages" id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
@@ -396,10 +397,14 @@ class ForgeChat extends HTMLElement {
       const headers = { 'Content-Type': 'application/json' };
       if (this._token) headers['Authorization'] = `Bearer ${this._token}`;
 
+      const chatBody = { message, sessionId: this._sessionId };
+      const agentAttr = this.getAttribute('agent');
+      if (agentAttr) chatBody.agentId = agentAttr;
+
       const res = await fetch(`${endpoint}/chat`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message, sessionId: this._sessionId })
+        body: JSON.stringify(chatBody)
       });
 
       if (!res.ok) {
@@ -432,7 +437,10 @@ class ForgeChat extends HTMLElement {
               const data = JSON.parse(line.slice(6));
               this._handleSSEEvent(eventType, data);
               if (eventType === 'text') assistantText += data.content || '';
-              if (eventType === 'session') this._sessionId = data.sessionId;
+              if (eventType === 'session') {
+                this._sessionId = data.sessionId;
+                if (data.agentId) this._agentId = data.agentId;
+              }
             } catch { /* skip malformed */ }
             eventType = null;
           }

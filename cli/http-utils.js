@@ -47,10 +47,15 @@ export function sendJson(res, statusCode, body) {
 /**
  * Load promoted tools from the tool registry and convert to LLM-format tool defs.
  * @param {import('better-sqlite3').Database} db
+ * @param {string|string[]} [allowlist='*'] — '*' for all, or array of tool_names to include
  * @returns {{ toolRows: object[], tools: object[] }}
  */
-export function loadPromotedTools(db) {
-  const toolRows = getAllToolRegistry(db).filter(r => r.lifecycle_state === 'promoted');
+export function loadPromotedTools(db, allowlist = '*') {
+  let toolRows = getAllToolRegistry(db).filter(r => r.lifecycle_state === 'promoted');
+  if (Array.isArray(allowlist)) {
+    const allowSet = new Set(allowlist);
+    toolRows = toolRows.filter(r => allowSet.has(r.tool_name));
+  }
   const tools = [];
   for (const row of toolRows) {
     try {

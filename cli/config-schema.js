@@ -13,7 +13,8 @@ export const CONFIG_DEFAULTS = {
   allowUserHitlConfig: false,
   adminKey: null,
   conversation: { store: 'sqlite', window: 25, redis: {} },
-  sidecar: { enabled: false, port: 8001 }
+  sidecar: { enabled: false, port: 8001 },
+  agents: []
 };
 
 const VALID_AUTH_MODES = ['verify', 'trust'];
@@ -90,6 +91,36 @@ export function validateConfig(raw = {}) {
     const w = raw.conversation.window;
     if (typeof w !== 'number' || w < 1 || !Number.isInteger(w)) {
       errors.push(`conversation.window must be a positive integer (got ${w})`);
+    }
+  }
+
+  // agents[]
+  if (raw.agents !== undefined) {
+    if (!Array.isArray(raw.agents)) {
+      errors.push('agents must be an array');
+    } else {
+      const AGENT_ID_RE = /^[a-z0-9_-]+$/;
+      for (let i = 0; i < raw.agents.length; i++) {
+        const a = raw.agents[i];
+        if (!a.id || typeof a.id !== 'string' || !AGENT_ID_RE.test(a.id)) {
+          errors.push(`agents[${i}].id must be a slug matching /^[a-z0-9_-]+$/ (got "${a.id}")`);
+        }
+        if (!a.displayName || typeof a.displayName !== 'string') {
+          errors.push(`agents[${i}].displayName is required and must be a string`);
+        }
+        if (a.defaultHitlLevel !== undefined && !VALID_HITL_LEVELS.includes(a.defaultHitlLevel)) {
+          errors.push(`agents[${i}].defaultHitlLevel must be one of: ${VALID_HITL_LEVELS.join(', ')} (got "${a.defaultHitlLevel}")`);
+        }
+        if (a.toolAllowlist !== undefined && !Array.isArray(a.toolAllowlist) && a.toolAllowlist !== '*') {
+          errors.push(`agents[${i}].toolAllowlist must be '*' or an array of tool names`);
+        }
+        if (a.maxTurns !== undefined && (typeof a.maxTurns !== 'number' || a.maxTurns < 1 || !Number.isInteger(a.maxTurns))) {
+          errors.push(`agents[${i}].maxTurns must be a positive integer (got ${a.maxTurns})`);
+        }
+        if (a.maxTokens !== undefined && (typeof a.maxTokens !== 'number' || a.maxTokens < 1 || !Number.isInteger(a.maxTokens))) {
+          errors.push(`agents[${i}].maxTokens must be a positive integer (got ${a.maxTokens})`);
+        }
+      }
     }
   }
 

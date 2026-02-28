@@ -166,6 +166,25 @@ CREATE TABLE IF NOT EXISTS verifier_tool_bindings (
 );
 CREATE INDEX IF NOT EXISTS idx_vtb_tool_name
   ON verifier_tool_bindings(tool_name, verifier_name);
+
+CREATE TABLE IF NOT EXISTS agent_registry (
+  agent_id           TEXT PRIMARY KEY,
+  display_name       TEXT NOT NULL,
+  description        TEXT,
+  system_prompt      TEXT,
+  default_model      TEXT,
+  default_hitl_level TEXT CHECK(default_hitl_level IN ('autonomous','cautious','standard','paranoid')),
+  allow_user_model_select INTEGER NOT NULL DEFAULT 0,
+  allow_user_hitl_config  INTEGER NOT NULL DEFAULT 0,
+  tool_allowlist     TEXT NOT NULL DEFAULT '*',
+  max_turns          INTEGER,
+  max_tokens         INTEGER,
+  is_default         INTEGER NOT NULL DEFAULT 0,
+  enabled            INTEGER NOT NULL DEFAULT 1,
+  seeded_from_config INTEGER NOT NULL DEFAULT 0,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL
+);
 `;
 
 /**
@@ -197,6 +216,12 @@ export function getDb(dbPath) {
   // Migrate: add sample_type column
   try {
     db.exec('ALTER TABLE eval_runs ADD COLUMN sample_type TEXT');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
+  // Migrate: add agent_id to conversations
+  try {
+    db.exec('ALTER TABLE conversations ADD COLUMN agent_id TEXT');
   } catch (err) {
     if (!err.message.includes('duplicate column name')) throw err;
   }
@@ -897,4 +922,104 @@ export function getVerifiersForTool(db, toolName) {
  */
 export function getBindingsForVerifier(db, verifierName) {
   return db.prepare('SELECT * FROM verifier_tool_bindings WHERE verifier_name = ?').all(verifierName);
+}
+
+// ── agent_registry ──────────────────────────────────────────────────────────
+
+/**
+ * Upsert an agent into the registry.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} row
+ */
+export function upsertAgent(db, row) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO agent_registry (agent_id, display_name, description, system_prompt, default_model,
+      default_hitl_level, allow_user_model_select, allow_user_hitl_config, tool_allowlist,
+      max_turns, max_tokens, is_default, enabled, seeded_from_config, created_at, updated_at)
+    VALUES (@agent_id, @display_name, @description, @system_prompt, @default_model,
+      @default_hitl_level, @allow_user_model_select, @allow_user_hitl_config, @tool_allowlist,
+      @max_turns, @max_tokens, @is_default, @enabled, @seeded_from_config, @now, @now)
+    ON CONFLICT(agent_id) DO UPDATE SET
+      display_name = excluded.display_name,
+      description = excluded.description,
+      system_prompt = excluded.system_prompt,
+      default_model = excluded.default_model,
+      default_hitl_level = excluded.default_hitl_level,
+      allow_user_model_select = excluded.allow_user_model_select,
+      allow_user_hitl_config = excluded.allow_user_hitl_config,
+      tool_allowlist = excluded.tool_allowlist,
+      max_turns = excluded.max_turns,
+      max_tokens = excluded.max_tokens,
+      is_default = excluded.is_default,
+      enabled = excluded.enabled,
+      seeded_from_config = excluded.seeded_from_config,
+      updated_at = excluded.updated_at
+  `).run({
+    agent_id: row.agent_id,
+    display_name: row.display_name,
+    description: row.description ?? null,
+    system_prompt: row.system_prompt ?? null,
+    default_model: row.default_model ?? null,
+    default_hitl_level: row.default_hitl_level ?? null,
+    allow_user_model_select: row.allow_user_model_select ?? 0,
+    allow_user_hitl_config: row.allow_user_hitl_config ?? 0,
+    tool_allowlist: row.tool_allowlist ?? '*',
+    max_turns: row.max_turns ?? null,
+    max_tokens: row.max_tokens ?? null,
+    is_default: row.is_default ?? 0,
+    enabled: row.enabled ?? 1,
+    seeded_from_config: row.seeded_from_config ?? 0,
+    now
+  });
+}
+
+/**
+ * Get a single agent by ID.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} agentId
+ * @returns {object|null}
+ */
+export function getAgent(db, agentId) {
+  return db.prepare('SELECT * FROM agent_registry WHERE agent_id = ?').get(agentId) ?? null;
+}
+
+/**
+ * Get all agents ordered by display_name.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {object[]}
+ */
+export function getAllAgents(db) {
+  return db.prepare('SELECT * FROM agent_registry ORDER BY display_name').all();
+}
+
+/**
+ * Get the default agent (is_default = 1 and enabled = 1).
+ * @param {import('better-sqlite3').Database} db
+ * @returns {object|null}
+ */
+export function getDefaultAgent(db) {
+  return db.prepare('SELECT * FROM agent_registry WHERE is_default = 1 AND enabled = 1').get() ?? null;
+}
+
+/**
+ * Set a single agent as default (clears others in a transaction).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} agentId
+ */
+export function setDefaultAgent(db, agentId) {
+  db.transaction(() => {
+    db.prepare('UPDATE agent_registry SET is_default = 0 WHERE is_default = 1').run();
+    db.prepare('UPDATE agent_registry SET is_default = 1, updated_at = ? WHERE agent_id = ?')
+      .run(new Date().toISOString(), agentId);
+  })();
+}
+
+/**
+ * Delete an agent by ID.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} agentId
+ */
+export function deleteAgent(db, agentId) {
+  db.prepare('DELETE FROM agent_registry WHERE agent_id = ?').run(agentId);
 }

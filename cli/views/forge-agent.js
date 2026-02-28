@@ -125,7 +125,7 @@ export function createView({
   const container = blessed.box({
     top: 0, left: 0, width: '100%', height: '100%', tags: true
   });
-  container.wantsBackConfirm = true;
+  // Escape/b navigates back immediately — session is auto-persisted.
 
   // ── Layout ──────────────────────────────────────────────────────────────
 
@@ -147,8 +147,8 @@ export function createView({
 
   const inputBox = blessed.textbox({
     parent: container, bottom: 0, left: 0, width: '100%', height: 3,
-    inputOnFocus: true, border: { type: 'line' },
-    label: ' Message (Enter send, Tab focus, ] next stage, [ prev stage) ',
+    border: { type: 'line' },
+    label: ' Message (Enter send, Esc shortcuts, ] next, [ prev) ',
     style: {
       border: { fg: '#333333' },
       focus: { border: { fg: 'cyan' } }
@@ -156,9 +156,44 @@ export function createView({
   });
 
   setFooter(
-    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Tab{/cyan-fg} focus  ' +
-    '{cyan-fg}]{/cyan-fg} next stage  {cyan-fg}[{/cyan-fg} prev stage  {cyan-fg}b{/cyan-fg} back'
+    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Esc{/cyan-fg} shortcuts  ' +
+    '{cyan-fg}e{/cyan-fg} edit  {cyan-fg}]{/cyan-fg} next  {cyan-fg}[{/cyan-fg} prev  {cyan-fg}b{/cyan-fg} back'
   );
+
+  // ── Explicit input mode management ──────────────────────────────────────
+  // blessed.textbox with inputOnFocus captures ALL keystrokes at the program
+  // level, causing conflicts with screen-level hotkeys. Instead we manage
+  // readInput() explicitly so hotkeys only work outside of input mode.
+
+  let inputActive = false;
+
+  function startInput() {
+    inputActive = true;
+    inputBox.focus();
+    inputBox.style.border = { fg: 'cyan' };
+    log.style.border = { fg: '#333333' };
+    screen.render();
+    inputBox.readInput((err, value) => {
+      inputActive = false;
+      if (err || value === undefined || value === null) {
+        // Escape pressed — exit to command mode
+        log.focus();
+        log.style.border = { fg: 'cyan' };
+        inputBox.style.border = { fg: '#333333' };
+        screen.render();
+        return;
+      }
+      // Enter pressed — submit
+      const text = (value || '').trim();
+      inputBox.clearValue();
+      screen.render();
+      if (text) {
+        doStep(text);
+      } else {
+        startInput();
+      }
+    });
+  }
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -318,8 +353,7 @@ export function createView({
     }
 
     busy = false;
-    inputBox.focus();
-    screen.render();
+    startInput();
   }
 
   // ── Session resumption ───────────────────────────────────────────────────
@@ -442,8 +476,7 @@ export function createView({
             }
 
             updatePhaseBar();
-            inputBox.focus();
-            screen.render();
+            startInput();
             return;
           }
         }
@@ -463,58 +496,41 @@ export function createView({
       appendSystem(`Init error: ${err.message}`);
     }
 
-    inputBox.focus();
-    screen.render();
+    startInput();
   });
 
-  // ── Input handling ────────────────────────────────────────────────────────
-
-  inputBox.on('submit', (value) => {
-    const text = (value || '').trim();
-    inputBox.clearValue();
-    if (text) doStep(text);
-    else inputBox.focus();
-    screen.render();
-  });
+  // ── Input handling (managed by startInput / readInput) ───────────────────
 
   // ── Key bindings ──────────────────────────────────────────────────────────
 
+  // e/i = enter input mode (vim-style)
+  screenKey(['e', 'i'], () => {
+    if (inputActive) return;
+    startInput();
+  });
+
   screenKey('tab', () => {
-    if (screen.focused === inputBox) {
-      log.focus();
-      log.style.border = { fg: 'cyan' };
-      inputBox.style.border = { fg: '#333333' };
+    if (inputActive) {
+      // Cancel textbox input → readInput callback moves focus to log
+      inputBox.cancel();
     } else {
-      inputBox.focus();
-      inputBox.style.border = { fg: 'cyan' };
-      log.style.border = { fg: '#333333' };
+      startInput();
     }
-    screen.render();
   });
 
   screenKey(']', () => {
-    if (busy) return;
+    if (inputActive || busy) return;
     advanceStage();
   });
 
   screenKey('[', () => {
-    if (busy) return;
+    if (inputActive || busy) return;
     rewindStage();
   });
 
   screenKey('b', () => {
-    if (busy) return;
-    openPopup();
-    const confirm = blessed.question({
-      parent: screen, border: 'line', height: 'shrink', width: 'half',
-      top: 'center', left: 'center', label: ' Leave Forge Agent? ', tags: true, keys: true
-    });
-    confirm.ask('Leave? Session is saved and can be resumed. (y/n)', (err, answer) => {
-      confirm.destroy();
-      closePopup();
-      if (!err && /^y/i.test(answer)) navigate('main-menu');
-      else { inputBox.focus(); screen.render(); }
-    });
+    if (inputActive) return;
+    navigate('main-menu');
   });
 
   container.refresh = () => { /* live view — no-op */ };

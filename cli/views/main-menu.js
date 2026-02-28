@@ -3,7 +3,7 @@
  */
 
 import blessed from 'blessed';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -216,30 +216,49 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (MENU_ITEMS[idx]) navigate(MENU_ITEMS[idx].key);
   });
 
-  // ── s = start service (only when not running) ─────────────────────────────
+  // ── s = toggle service (start / stop) ───────────────────────────────────
   screenKey('s', () => {
-    if (!serviceRunning) startService?.();
+    if (serviceRunning) {
+      const lock = readLock();
+      if (lock?.pid) {
+        try { process.kill(lock.pid); } catch (_) { /* already dead */ }
+      }
+      try { unlinkSync(LOCK_FILE); } catch (_) { /* ignore */ }
+      serviceRunning = false;
+      lastStatsJson = ''; // force next refresh to re-render
+    } else {
+      startService?.();
+    }
   });
+
+  setFooter(
+    ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
+    '  {cyan-fg}1-8{/cyan-fg} jump  {cyan-fg}s{/cyan-fg} service  {cyan-fg}q{/cyan-fg} quit'
+  );
+
+  let lastStatsJson = '';
 
   container.refresh = async () => {
     try {
       const stats = await buildStats(config);
+      const statsJson = JSON.stringify(stats);
+      if (statsJson === lastStatsJson) return; // no change — skip render
+      lastStatsJson = statsJson;
+
       serviceRunning = stats.serviceRunning;
       list.setItems(buildItems(stats));
 
       if (!serviceRunning) {
         noticeBar.setContent(
-          ' {yellow-fg}⚡ Forge service not running{/yellow-fg}' +
+          ' {yellow-fg}⚡ Service stopped{/yellow-fg}' +
           '  {cyan-fg}s{/cyan-fg} {#888888-fg}to start{/#888888-fg}'
         );
       } else {
-        noticeBar.setContent('');
+        noticeBar.setContent(
+          ' {green-fg}⚡ Service running{/green-fg}' +
+          '  {cyan-fg}s{/cyan-fg} {#888888-fg}to stop{/#888888-fg}'
+        );
       }
-
-      setFooter(
-        ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
-        '  {cyan-fg}1-8{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
-      );
     } catch (_) {
       list.setItems(MENU_ITEMS.map((m, i) => ` ${i + 1}  ${m.icon}  ${m.label}`));
     }

@@ -70,19 +70,49 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   const inputBox = blessed.textbox({
     parent: container,
     bottom: 0, left: 0, width: '100%', height: 3,
-    inputOnFocus: true,
     border: { type: 'line' },
     style: {
       border: { fg: '#333333' },
       focus: { border: { fg: 'cyan' } }
     },
-    label: ' Message (Enter to send, Tab to scroll log) '
+    label: ' Message (Enter send, Esc shortcuts, Tab scroll) '
   });
 
   setFooter(
-    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Tab{/cyan-fg} toggle scroll  ' +
-    '{cyan-fg}c{/cyan-fg} clear  {cyan-fg}r{/cyan-fg} reset  {cyan-fg}b{/cyan-fg} back'
+    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Esc{/cyan-fg} shortcuts  ' +
+    '{cyan-fg}e{/cyan-fg} edit  {cyan-fg}c{/cyan-fg} clear  {cyan-fg}r{/cyan-fg} reset  {cyan-fg}b{/cyan-fg} back'
   );
+
+  // ── Explicit input mode management ──────────────────────────────────────
+  let inputActive = false;
+
+  function startInput() {
+    inputActive = true;
+    inputBox.focus();
+    inputBox.style.border = { fg: 'cyan' };
+    log.style.border = { fg: '#333333' };
+    screen.render();
+    inputBox.readInput((err, value) => {
+      inputActive = false;
+      if (err || value === undefined || value === null) {
+        // Escape — exit to command mode
+        log.focus();
+        log.style.border = { fg: 'cyan' };
+        inputBox.style.border = { fg: '#333333' };
+        screen.render();
+        return;
+      }
+      // Enter — submit
+      const text = (value || '').trim();
+      inputBox.clearValue();
+      screen.render();
+      if (text) {
+        sendMessage(text);
+      } else {
+        startInput();
+      }
+    });
+  }
 
   // ── Conversation state ────────────────────────────────────────────────────
   let apiMessages = [];      // provider-format message history
@@ -112,7 +142,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
         ' {red-fg}⚠ No API key{/red-fg}  Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Settings → API Keys'
       );
       screen.render();
-      inputBox.focus();
+      startInput();
       return;
     }
 
@@ -146,7 +176,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
     initialized = true;
     screen.render();
-    inputBox.focus();
+    startInput();
   }
 
   // ── Log helpers ────────────────────────────────────────────────────────────
@@ -264,41 +294,37 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     log.log('');
     busy = false;
     screen.render();
-    inputBox.focus();
+    startInput();
   }
 
-  // ── Input handling ─────────────────────────────────────────────────────────
-  inputBox.on('submit', (value) => {
-    const text = (value || '').trim();
-    inputBox.clearValue();
-    if (text) sendMessage(text);
-    else inputBox.focus();
-    screen.render();
+  // ── Input handling (managed by startInput / readInput) ───────────────────
+
+  // e/i = enter input mode (vim-style)
+  screenKey(['e', 'i'], () => {
+    if (inputActive) return;
+    startInput();
   });
 
-  // Tab: toggle focus between input and log for scrolling
+  // Tab: toggle focus between input and log
   screenKey('tab', () => {
-    if (screen.focused === inputBox) {
-      log.focus();
-      inputBox.style.border = { fg: '#333333' };
-      log.style.border = { fg: 'cyan' };
+    if (inputActive) {
+      inputBox.cancel();
     } else {
-      inputBox.focus();
-      log.style.border = { fg: '#333333' };
-      inputBox.style.border = { fg: 'cyan' };
+      startInput();
     }
-    screen.render();
   });
 
-  // c = clear log
+  // c = clear log (only in command mode)
   screenKey('c', () => {
+    if (inputActive) return;
     log.setContent('');
     appendSystem('Log cleared.');
     screen.render();
   });
 
-  // r = reset conversation (keeps connection, clears history)
+  // r = reset conversation (only in command mode)
   screenKey('r', () => {
+    if (inputActive) return;
     apiMessages = [];
     log.setContent('');
     appendSystem('Conversation reset.');

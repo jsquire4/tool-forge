@@ -31,7 +31,7 @@ export function createView({
   screenKey, openPopup, closePopup, startService
 }) {
   const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
-  container.wantsBackConfirm = true;
+  // Escape/b navigates back immediately — session state is auto-persisted.
 
   const phaseBar = blessed.box({
     parent: container, top: 0, left: 0, width: '100%', height: 1,
@@ -61,15 +61,47 @@ export function createView({
 
   const inputBox = blessed.textbox({
     parent: container, bottom: 0, left: 0, width: '100%', height: 3,
-    inputOnFocus: true, border: { type: 'line' },
-    label: ' Message (Enter send, Tab panel, s skip) ',
+    border: { type: 'line' },
+    label: ' Message (Enter send, Esc shortcuts, Tab panel) ',
     style: { border: { fg: '#333333' }, focus: { border: { fg: 'cyan' } } }
   });
 
   setFooter(
-    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Tab{/cyan-fg} panel  ' +
-    '{cyan-fg}s{/cyan-fg} skip  {cyan-fg}m{/cyan-fg} compare  {cyan-fg}b{/cyan-fg} back'
+    ' {cyan-fg}Enter{/cyan-fg} send  {cyan-fg}Esc{/cyan-fg} shortcuts  ' +
+    '{cyan-fg}e{/cyan-fg} edit  {cyan-fg}s{/cyan-fg} skip  {cyan-fg}m{/cyan-fg} compare  {cyan-fg}b{/cyan-fg} back'
   );
+
+  // ── Explicit input mode management ──────────────────────────────────────
+  let inputActive = false;
+
+  function startInput() {
+    inputActive = true;
+    inputBox.focus();
+    inputBox.style.border = { fg: 'cyan' };
+    log.style.border = { fg: '#333333' };
+    specPanel.style.border = { fg: '#333333' };
+    screen.render();
+    inputBox.readInput((err, value) => {
+      inputActive = false;
+      if (err || value === undefined || value === null) {
+        // Escape — exit to command mode
+        log.focus();
+        log.style.border = { fg: 'cyan' };
+        inputBox.style.border = { fg: '#333333' };
+        screen.render();
+        return;
+      }
+      // Enter — submit
+      const text = (value || '').trim();
+      inputBox.clearValue();
+      screen.render();
+      if (text) {
+        doStep(text);
+      } else {
+        startInput();
+      }
+    });
+  }
 
   let forgeState = createInitialState();
   let busy = false;
@@ -150,7 +182,7 @@ export function createView({
       closePopup?.();
       popup.destroy();
       screen.render();
-      inputBox.focus();
+      startInput();
     }
 
     popup.key('y', async () => {
@@ -285,7 +317,7 @@ export function createView({
     busy = false;
     screen.render();
     if (!previewPending) {
-      inputBox.focus();
+      startInput();
     }
   }
 
@@ -333,65 +365,44 @@ export function createView({
     await doStep(null);
   });
 
-  // ── Input ──────────────────────────────────────────────────────────────
-  inputBox.on('submit', (value) => {
-    const text = (value || '').trim();
-    inputBox.clearValue();
-    if (text) doStep(text);
-    else inputBox.focus();
-    screen.render();
-  });
+  // ── Input (managed by startInput / readInput) ────────────────────────
 
   // ── Key bindings ───────────────────────────────────────────────────────
+
+  // e/i = enter input mode (vim-style)
+  screenKey(['e', 'i'], () => {
+    if (inputActive) return;
+    startInput();
+  });
+
   screenKey('tab', () => {
-    if (screen.focused === inputBox) {
-      log.focus();
-      inputBox.style.border = { fg: '#333333' };
-      log.style.border = { fg: 'cyan' };
-      specPanel.style.border = { fg: '#333333' };
+    if (inputActive) {
+      inputBox.cancel();
     } else if (screen.focused === log) {
       specPanel.focus();
       log.style.border = { fg: '#333333' };
       specPanel.style.border = { fg: 'cyan' };
+      screen.render();
     } else {
-      inputBox.focus();
-      specPanel.style.border = { fg: '#333333' };
-      inputBox.style.border = { fg: 'cyan' };
+      startInput();
     }
-    screen.render();
   });
 
   screenKey('s', () => {
-    if (screen.focused === inputBox) return;
-    if (busy) return;
-    if (previewPending) return;
+    if (inputActive || busy || previewPending) return;
     doStep('skip');
   });
 
   screenKey('m', () => {
-    if (busy) return;
-    if (previewPending) return;
+    if (inputActive || busy || previewPending) return;
     config._forgeState = forgeState;
     config._forgeInput = null;
     navigate('model-compare');
   });
 
   screenKey('b', () => {
-    if (forgeState.phase === 'explore' || forgeState.phase === 'done') {
-      navigate('main-menu');
-      return;
-    }
-    const confirm = blessed.question({
-      parent: screen, border: 'line', height: 'shrink', width: 'half',
-      top: 'center', left: 'center', label: ' Leave Forge? ', tags: true, keys: true
-    });
-    openPopup?.();
-    confirm.ask('Leave the forge dialogue? Progress is saved. (y/n)', (err, answer) => {
-      confirm.destroy();
-      closePopup?.();
-      if (!err && /^y/i.test(answer)) navigate('main-menu');
-      else { inputBox.focus(); screen.render(); }
-    });
+    if (inputActive) return;
+    navigate('main-menu');
   });
 
   container.refresh = () => { /* live view — no-op */ };

@@ -107,7 +107,7 @@ export function createView({
     top: 0, left: 0, width: '100%', height: '100%',
     tags: true
   });
-  root.wantsBackConfirm = true;
+  // Escape/b navigates back immediately.
 
   // ── Header row ──────────────────────────────────────────────────────────
 

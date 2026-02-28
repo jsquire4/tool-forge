@@ -30,6 +30,7 @@ import { makePreferenceStore } from './preference-store.js';
 import { makeConversationStore } from './conversation-store.js';
 import { makeHitlEngine } from './hitl-engine.js';
 import { handleChat } from './handlers/chat.js';
+import { handleChatSync } from './handlers/chat-sync.js';
 import { handleChatResume } from './handlers/chat-resume.js';
 import { handleAdminConfig } from './handlers/admin.js';
 import { handleGetPreferences, handlePutPreferences } from './handlers/preferences.js';
@@ -262,6 +263,9 @@ const server = createHttpServer(async (req, res) => {
   if (sidecarCtx) {
     if (url.pathname === '/agent-api/chat' && req.method === 'POST') {
       return handleChat(req, res, sidecarCtx);
+    }
+    if (url.pathname === '/agent-api/chat-sync' && req.method === 'POST') {
+      return handleChatSync(req, res, sidecarCtx);
     }
     if (url.pathname === '/agent-api/chat/resume' && req.method === 'POST') {
       return handleChatResume(req, res, sidecarCtx);

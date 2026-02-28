@@ -62,7 +62,10 @@ export async function handleChatResume(req, res, ctx) {
   // 5. Resume the ReAct loop
   const { preferenceStore, promptStore, conversationStore, db, config, env } = ctx;
   const userId = authResult.userId;
-  const userJwt = (req.headers.authorization ?? '').slice(7) || null;
+  let userJwt = (req.headers.authorization ?? '').slice(7) || null;
+  if (!userJwt && req.url) {
+    try { userJwt = new URL(req.url, 'http://localhost').searchParams.get('token') || null; } catch { /* malformed URL */ }
+  }
   const effective = preferenceStore.resolveEffective(userId, config, env);
   const systemPrompt = promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.';
 

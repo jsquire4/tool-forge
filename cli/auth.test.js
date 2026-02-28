@@ -106,6 +106,46 @@ describe('auth', () => {
     });
   });
 
+  describe('query param token fallback', () => {
+    const auth = createAuth({ mode: 'trust', claimsPath: 'sub' });
+
+    it('authenticates via ?token= query param', () => {
+      const token = makeUnsignedJwt({ sub: 'user-qp' });
+      const result = auth.authenticate({ headers: {}, url: `/agent-api/chat?token=${token}` });
+      expect(result.authenticated).toBe(true);
+      expect(result.userId).toBe('user-qp');
+    });
+
+    it('Authorization header takes priority over query param', () => {
+      const headerToken = makeUnsignedJwt({ sub: 'header-user' });
+      const queryToken = makeUnsignedJwt({ sub: 'query-user' });
+      const result = auth.authenticate({
+        headers: { authorization: `Bearer ${headerToken}` },
+        url: `/agent-api/chat?token=${queryToken}`
+      });
+      expect(result.authenticated).toBe(true);
+      expect(result.userId).toBe('header-user');
+    });
+
+    it('neither header nor query param returns unauthenticated', () => {
+      const result = auth.authenticate({ headers: {}, url: '/agent-api/chat' });
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toContain('Missing token');
+    });
+
+    it('empty ?token= value returns unauthenticated', () => {
+      const result = auth.authenticate({ headers: {}, url: '/agent-api/chat?token=' });
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toContain('Missing token');
+    });
+
+    it('malformed URL falls through to missing token', () => {
+      const result = auth.authenticate({ headers: {}, url: ':::bad' });
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toContain('Missing token');
+    });
+  });
+
   describe('authenticateAdmin', () => {
     it('correct key authenticates', () => {
       const result = authenticateAdmin(makeReq('admin-key-123'), 'admin-key-123');

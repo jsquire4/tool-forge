@@ -26,14 +26,24 @@ export function createAuth(authConfig = {}) {
 
   return {
     authenticate(req) {
+      let token = null;
+
+      // Priority 1: Authorization header
       const authHeader = req.headers?.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return { authenticated: false, userId: null, claims: null, error: 'Missing or invalid Authorization header' };
+      if (authHeader?.startsWith('Bearer ')) {
+        token = authHeader.slice(7);
       }
 
-      const token = authHeader.slice(7);
+      // Priority 2: ?token= query param (for EventSource which can't set headers)
+      if (!token && req.url) {
+        try {
+          const url = new URL(req.url, 'http://localhost');
+          token = url.searchParams.get('token');
+        } catch { /* malformed URL */ }
+      }
+
       if (!token) {
-        return { authenticated: false, userId: null, claims: null, error: 'Empty token' };
+        return { authenticated: false, userId: null, claims: null, error: 'Missing token' };
       }
 
       const parts = token.split('.');

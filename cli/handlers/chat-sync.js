@@ -1,27 +1,51 @@
 /**
- * Chat handler — POST /agent-api/chat
+ * Chat Sync handler — POST /agent-api/chat-sync
  *
- * Authenticates the user, loads preferences + prompt, starts a ReAct loop,
- * and streams events back as SSE.
+ * Synchronous variant of the chat endpoint. Reuses all shared infrastructure
+ * (auth, preferences, prompt, session, history, hooks, reactLoop) but buffers
+ * events and returns a single JSON response instead of SSE.
  *
  * Request:
- *   POST /agent-api/chat
- *   Header: Authorization: Bearer <userJwt>
+ *   POST /agent-api/chat-sync
+ *   Header: Authorization: Bearer <userJwt>  (or ?token=<jwt> query param)
  *   Body: { message: string, sessionId?: string }
  *
- * Response: SSE stream of ReactEvent objects
+ * Response (200):
+ *   { conversationId, message, toolCalls, warnings, flags }
+ *
+ * Response (409 — HITL pause):
+ *   { resumeToken, tool, message }
  */
 
-import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
 import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
+
+/**
+ * Extract JWT token from header or query param.
+ * @param {import('http').IncomingMessage} req
+ * @returns {string|null}
+ */
+function extractJwt(req) {
+  const authHeader = req.headers?.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const hdr = authHeader.slice(7);
+    if (hdr) return hdr;
+  }
+  if (req.url) {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      return url.searchParams.get('token') || null;
+    } catch { /* malformed URL */ }
+  }
+  return null;
+}
 
 /**
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
  * @param {object} ctx — { auth, promptStore, preferenceStore, conversationStore, db, config, env, hooks }
  */
-export async function handleChat(req, res, ctx) {
+export async function handleChatSync(req, res, ctx) {
   const { auth, promptStore, preferenceStore, conversationStore, db, config, env } = ctx;
 
   // 1. Authenticate
@@ -31,10 +55,7 @@ export async function handleChat(req, res, ctx) {
     return;
   }
   const userId = authResult.userId;
-  let userJwt = (req.headers.authorization ?? '').slice(7) || null;
-  if (!userJwt && req.url) {
-    try { userJwt = new URL(req.url, 'http://localhost').searchParams.get('token') || null; } catch { /* malformed URL */ }
-  }
+  const userJwt = extractJwt(req);
 
   // 2. Parse body
   const body = await readBody(req);
@@ -72,13 +93,7 @@ export async function handleChat(req, res, ctx) {
   // 7. Load promoted tools
   const { toolRows, tools } = loadPromotedTools(db);
 
-  // 8. Start SSE stream
-  const sse = initSSE(res);
-
-  // Send session info
-  sse.send('session', { sessionId });
-
-  // 9. Build per-request hooks
+  // 8. Build per-request hooks
   const { hitlEngine, verifierRunner } = ctx;
   if (verifierRunner) {
     try { await verifierRunner.loadFromDb(db); } catch { /* non-fatal */ }
@@ -107,7 +122,9 @@ export async function handleChat(req, res, ctx) {
     }
   };
 
-  // 10. Run ReAct loop
+  // 9. Run ReAct loop and buffer events
+  const result = { conversationId: sessionId, message: '', toolCalls: [], warnings: [], flags: [] };
+
   try {
     const gen = reactLoop({
       provider: effective.provider,
@@ -124,24 +141,42 @@ export async function handleChat(req, res, ctx) {
       hooks
     });
 
-    let assistantText = '';
     for await (const event of gen) {
-      sse.send(event.type, event);
-
-      // Accumulate assistant text for persistence
-      if (event.type === 'text') {
-        assistantText += event.content;
-      }
-
-      // Persist on completion
-      if (event.type === 'done' && assistantText) {
-        await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText);
+      switch (event.type) {
+        case 'text':
+          result.message += event.content;
+          break;
+        case 'tool_call':
+          result.toolCalls.push({ id: event.id, name: event.tool, args: event.args });
+          break;
+        case 'tool_result': {
+          const tc = result.toolCalls.find(t => t.id === event.id);
+          if (tc) tc.result = event.result;
+          break;
+        }
+        case 'tool_warning':
+          result.warnings.push({ tool: event.tool, message: event.message, verifier: event.verifier });
+          break;
+        case 'hitl':
+          // Persist any text accumulated before the pause
+          if (result.message) {
+            await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message);
+          }
+          return sendJson(res, 409, { resumeToken: event.resumeToken, tool: event.tool, message: event.message });
+        case 'error':
+          result.flags.push(event.message);
+          break;
+        case 'done':
+          break; // handled after loop
       }
     }
   } catch (err) {
-    sse.send('error', { type: 'error', message: err.message });
+    result.flags.push(err.message);
   }
 
-  sse.close();
+  // Persist assistant message + respond
+  if (result.message) {
+    await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message);
+  }
+  sendJson(res, 200, result);
 }
-

@@ -226,10 +226,6 @@ export function createView({
 
   function persistMessage(role, content) {
     if (!db || !sessionId) return;
-    try {
-      const { insertConversationMessage } = require('../db.js'); // dynamic handled below
-    } catch (_) { /* non-fatal */ }
-    // Use the already-imported module (loaded in init)
     if (!db._insertMsg) return;
     try {
       db._insertMsg({ session_id: sessionId, stage: STAGES[currentStageIdx] || 'unknown', role, content });

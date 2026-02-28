@@ -918,6 +918,7 @@ export async function forgeStep({
     ? { ...state, _systemPromptOverride: systemPromptOverride }
     : state;
 
+  let result;
   switch (phase) {
     case 'explore':
       result = await handleExplore({ state: s, userInput, modelConfig });

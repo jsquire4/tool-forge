@@ -1009,6 +1009,9 @@ export function getDefaultAgent(db) {
  */
 export function setDefaultAgent(db, agentId) {
   db.transaction(() => {
+    // Verify agent exists and is enabled before clearing defaults
+    const exists = db.prepare('SELECT 1 FROM agent_registry WHERE agent_id = ? AND enabled = 1').get(agentId);
+    if (!exists) return;
     db.prepare('UPDATE agent_registry SET is_default = 0 WHERE is_default = 1').run();
     db.prepare('UPDATE agent_registry SET is_default = 1, updated_at = ? WHERE agent_id = ?')
       .run(new Date().toISOString(), agentId);

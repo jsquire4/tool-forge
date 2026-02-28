@@ -106,7 +106,7 @@ export function validateConfig(raw = {}) {
           errors.push(`agents[${i}].id must be a slug matching /^[a-z0-9_-]+$/ (got "${a.id}")`);
         }
         if (!a.displayName || typeof a.displayName !== 'string') {
-          errors.push(`agents[${i}].displayName is required and must be a string`);
+          errors.push(`agents[${i}].displayName is required and must be a string (got ${JSON.stringify(a.displayName)})`);
         }
         if (a.defaultHitlLevel !== undefined && !VALID_HITL_LEVELS.includes(a.defaultHitlLevel)) {
           errors.push(`agents[${i}].defaultHitlLevel must be one of: ${VALID_HITL_LEVELS.join(', ')} (got "${a.defaultHitlLevel}")`);

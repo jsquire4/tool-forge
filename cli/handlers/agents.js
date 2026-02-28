@@ -115,8 +115,10 @@ export async function handleAgents(req, res, ctx) {
       return;
     }
 
-    // Merge: existing values as base, body overrides
-    agentRegistry.upsertAgent(bodyToRow({ ...rowToBody(existing), ...body, id: agentId }));
+    // Merge: existing values as base, body overrides. Mark as admin-edited.
+    const row = bodyToRow({ ...rowToBody(existing), ...body, id: agentId });
+    row.seeded_from_config = 0;
+    agentRegistry.upsertAgent(row);
     sendJson(res, 200, agentRegistry.getAgent(agentId));
     return;
   }
@@ -129,6 +131,13 @@ export async function handleAgents(req, res, ctx) {
       return;
     }
     agentRegistry.deleteAgent(agentId);
+    // If we deleted the default, auto-promote the first remaining enabled agent
+    if (existing.is_default) {
+      const remaining = agentRegistry.getAllAgents().filter(a => a.enabled);
+      if (remaining.length > 0) {
+        agentRegistry.setDefault(remaining[0].agent_id);
+      }
+    }
     sendJson(res, 200, { ok: true, deleted: agentId });
     return;
   }
@@ -157,11 +166,11 @@ function validateAgentBody(body, isCreate) {
   if (body.toolAllowlist !== undefined && body.toolAllowlist !== '*' && !Array.isArray(body.toolAllowlist)) {
     return 'toolAllowlist must be "*" or an array of tool names';
   }
-  if (body.maxTurns !== undefined && (typeof body.maxTurns !== 'number' || body.maxTurns < 1)) {
-    return 'maxTurns must be a positive number';
+  if (body.maxTurns !== undefined && (typeof body.maxTurns !== 'number' || body.maxTurns < 1 || !Number.isInteger(body.maxTurns))) {
+    return 'maxTurns must be a positive integer';
   }
-  if (body.maxTokens !== undefined && (typeof body.maxTokens !== 'number' || body.maxTokens < 1)) {
-    return 'maxTokens must be a positive number';
+  if (body.maxTokens !== undefined && (typeof body.maxTokens !== 'number' || body.maxTokens < 1 || !Number.isInteger(body.maxTokens))) {
+    return 'maxTokens must be a positive integer';
   }
   return null;
 }

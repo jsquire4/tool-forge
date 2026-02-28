@@ -174,7 +174,11 @@ describe('handleChatSync', () => {
       yield { type: 'hitl', resumeToken: 'rt-abc', tool: 'dangerous_tool', message: 'Needs confirmation' };
     })());
 
-    await handleChatSync(makeReq({ message: 'do dangerous' }, token), res, makeCtx(db));
+    const hitlEngine = {
+      shouldPause: () => ({ pause: true }),
+      pause: vi.fn().mockResolvedValue('rt-abc')
+    };
+    await handleChatSync(makeReq({ message: 'do dangerous' }, token), res, makeCtx(db, { hitlEngine }));
 
     expect(res.writeHead).toHaveBeenCalledWith(409, expect.any(Object));
     const body = res._body();

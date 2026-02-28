@@ -58,7 +58,13 @@ export async function handleChatSync(req, res, ctx) {
   const userJwt = extractJwt(req);
 
   // 2. Parse body
-  const body = await readBody(req);
+  let body;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    sendJson(res, 413, { error: err.message });
+    return;
+  }
   if (!body.message) {
     sendJson(res, 400, { error: 'message is required' });
     return;
@@ -108,7 +114,7 @@ export async function handleChatSync(req, res, ctx) {
 
   // 9. Load promoted tools (with agent allowlist filtering)
   const allowlist = agent?.tool_allowlist ?? '*';
-  const parsedAllowlist = (allowlist !== '*') ? (() => { try { return JSON.parse(allowlist); } catch { return '*'; } })() : '*';
+  const parsedAllowlist = (allowlist !== '*') ? (() => { try { const parsed = JSON.parse(allowlist); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : '*';
   const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
 
   // 10. Build per-request hooks
@@ -181,18 +187,22 @@ export async function handleChatSync(req, res, ctx) {
           if (result.message) {
             await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id);
           }
-          // HITL fix: persist pause state via hitlEngine
-          let resumeToken = event.resumeToken;
+          // Persist pause state via hitlEngine
+          let resumeToken;
           if (hitlEngine) {
-            resumeToken = await hitlEngine.pause({
-              sessionId,
-              agentId: agent?.agent_id ?? null,
-              conversationMessages: event.conversationMessages,
-              pendingToolCalls: event.pendingToolCalls,
-              turnIndex: event.turnIndex,
-              tool: event.tool,
-              args: event.args
-            });
+            try {
+              resumeToken = await hitlEngine.pause({
+                sessionId,
+                agentId: agent?.agent_id ?? null,
+                conversationMessages: event.conversationMessages,
+                pendingToolCalls: event.pendingToolCalls,
+                turnIndex: event.turnIndex,
+                tool: event.tool,
+                args: event.args
+              });
+            } catch (pauseErr) {
+              return sendJson(res, 500, { error: 'Failed to persist HITL state' });
+            }
           }
           return sendJson(res, 409, { resumeToken, tool: event.tool, message: event.message });
         }

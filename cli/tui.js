@@ -115,21 +115,26 @@ export async function runTui(config) {
   // ── Auto-refresh timer ────────────────────────────────────────────────────
   const VIEW_REFRESH_MS = 100;
   let refreshTimer = null;
+  let refreshGeneration = 0;  // bumped on navigation to cancel in-flight refreshes
 
   function scheduleViewRefresh() {
     clearTimeout(refreshTimer);
+    const gen = refreshGeneration;
     refreshTimer = setTimeout(async () => {
+      if (gen !== refreshGeneration) return; // navigation happened — abort
       if (popupDepth === 0 && currentView?.refresh) {
         try { await currentView.refresh(); } catch (_) { /* swallow */ }
       }
+      if (gen !== refreshGeneration) return; // navigation during refresh — don't reschedule
       scheduleViewRefresh();
     }, VIEW_REFRESH_MS);
     refreshTimer.unref?.();
   }
 
   async function showView(name) {
-    // 0. Stop the auto-refresh timer for the outgoing view.
+    // 0. Stop the auto-refresh timer and invalidate any in-flight refresh.
     clearTimeout(refreshTimer);
+    refreshGeneration++;
 
     // 1. Unregister all view-local key bindings from the outgoing view.
     for (const { keys, fn } of viewKeys) {
@@ -152,6 +157,10 @@ export async function runTui(config) {
         try { child.destroy(); } catch (_) { /* ignore */ }
       }
     }
+
+    // 3c. Force full screen buffer reallocation so smartCSR doesn't leave
+    //     stale characters from the outgoing view (e.g. noticeBar text).
+    screen.realloc();
 
     currentViewName = name;
 

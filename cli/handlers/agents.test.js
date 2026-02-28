@@ -158,6 +158,20 @@ describe('handleAgents', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('DELETE default agent auto-promotes another', async () => {
+    ctx.agentRegistry.upsertAgent({ agent_id: 'a1', display_name: 'Agent 1' });
+    ctx.agentRegistry.upsertAgent({ agent_id: 'a2', display_name: 'Agent 2' });
+    ctx.agentRegistry.setDefault('a1');
+
+    const res = makeRes();
+    await handleAgents(makeReq('DELETE', '/forge-admin/agents/a1'), res, ctx);
+    expect(res.statusCode).toBe(200);
+
+    // a2 should now be default
+    const a2 = ctx.agentRegistry.getAgent('a2');
+    expect(a2.is_default).toBe(1);
+  });
+
   it('POST /forge-admin/agents/:agentId/set-default — sets default', async () => {
     ctx.agentRegistry.upsertAgent({ agent_id: 'a1', display_name: 'Agent 1' });
     ctx.agentRegistry.upsertAgent({ agent_id: 'a2', display_name: 'Agent 2' });
@@ -187,6 +201,16 @@ describe('handleAgents', () => {
     expect(res.body.error).toContain('defaultHitlLevel');
   });
 
+  it('rejects fractional maxTurns', async () => {
+    const res = makeRes();
+    await handleAgents(
+      makeReq('POST', '/forge-admin/agents', { id: 'bad', displayName: 'Bad', maxTurns: 3.7 }),
+      res, ctx
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toContain('maxTurns');
+  });
+
   it('supports toolAllowlist as array', async () => {
     const res = makeRes();
     await handleAgents(
@@ -195,5 +219,27 @@ describe('handleAgents', () => {
     );
     expect(res.statusCode).toBe(201);
     expect(res.body.tool_allowlist).toBe('["get_balance","list_users"]');
+  });
+
+  it('returns 501 when agentRegistry is null', async () => {
+    const res = makeRes();
+    await handleAgents(
+      makeReq('GET', '/forge-admin/agents'),
+      res,
+      { config: { adminKey: 'test-admin-key' }, agentRegistry: null }
+    );
+    expect(res.statusCode).toBe(501);
+  });
+
+  it('PUT marks agent as admin-edited (seeded_from_config=0)', async () => {
+    ctx.agentRegistry.upsertAgent({ agent_id: 'seeded', display_name: 'Seeded', seeded_from_config: 1 });
+    const res = makeRes();
+    await handleAgents(
+      makeReq('PUT', '/forge-admin/agents/seeded', { displayName: 'Admin Edit' }),
+      res, ctx
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.body.display_name).toBe('Admin Edit');
+    expect(res.body.seeded_from_config).toBe(0);
   });
 });

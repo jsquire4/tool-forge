@@ -333,9 +333,15 @@ class ForgeChat extends HTMLElement {
     html = html.replace(/(?<!\w)\*([^*]+?)\*(?!\w)/g, '<em>$1</em>');
     html = html.replace(/(?<!\w)_([^_]+?)_(?!\w)/g, '<em>$1</em>');
 
-    // Links: [text](url)
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    // Links: [text](url) — reject javascript: and data: protocols
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) => {
+      const trimmed = href.trim().toLowerCase();
+      if (trimmed.startsWith('javascript:') || trimmed.startsWith('data:') || trimmed.startsWith('vbscript:')) {
+        return text; // strip the link, keep text
+      }
+      const safeHref = href.replace(/"/g, '&quot;');
+      return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    });
 
     // Unordered lists: lines starting with - or *
     html = html.replace(/^([ \t]*[-*] .+(?:\n|$))+/gm, (match) => {
@@ -439,7 +445,7 @@ class ForgeChat extends HTMLElement {
               if (eventType === 'text') assistantText += data.content || '';
               if (eventType === 'session') {
                 this._sessionId = data.sessionId;
-                if (data.agentId) this._agentId = data.agentId;
+                // agentId from session event (available for event dispatch)
               }
             } catch { /* skip malformed */ }
             eventType = null;

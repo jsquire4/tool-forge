@@ -55,9 +55,9 @@ export class AgentRegistry {
     try {
       allowed = JSON.parse(allowlist);
     } catch {
-      return loaded; // malformed → pass all through
+      return { toolRows: [], tools: [] }; // malformed → deny all (fail closed)
     }
-    if (!Array.isArray(allowed)) return loaded;
+    if (!Array.isArray(allowed)) return { toolRows: [], tools: [] };
 
     const allowSet = new Set(allowed);
     const toolRows = loaded.toolRows.filter(r => allowSet.has(r.tool_name));
@@ -80,8 +80,10 @@ export class AgentRegistry {
 
     if (agent.default_model) scoped.defaultModel = agent.default_model;
     if (agent.default_hitl_level) scoped.defaultHitlLevel = agent.default_hitl_level;
-    if (agent.allow_user_model_select != null) scoped.allowUserModelSelect = !!agent.allow_user_model_select;
-    if (agent.allow_user_hitl_config != null) scoped.allowUserHitlConfig = !!agent.allow_user_hitl_config;
+    // Only override boolean flags when explicitly enabled (1), not on DB default (0).
+    // DB column is NOT NULL DEFAULT 0, so 0 means "not explicitly set" — defer to base config.
+    if (agent.allow_user_model_select) scoped.allowUserModelSelect = true;
+    if (agent.allow_user_hitl_config) scoped.allowUserHitlConfig = true;
     if (agent.max_turns != null) scoped.maxTurns = agent.max_turns;
     if (agent.max_tokens != null) scoped.maxTokens = agent.max_tokens;
 
@@ -120,9 +122,12 @@ export class AgentRegistry {
     const agents = this._config.agents;
     if (!Array.isArray(agents) || agents.length === 0) return;
 
-    let hasDefault = false;
+    let defaultAgentId = null;
     for (const a of agents) {
       if (!a.id || !a.displayName) continue;
+      // Skip if agent exists and was modified outside of config seeding
+      const existing = getAgent(this._db, a.id);
+      if (existing && !existing.seeded_from_config) continue;
       upsertAgent(this._db, {
         agent_id: a.id,
         display_name: a.displayName,
@@ -135,15 +140,17 @@ export class AgentRegistry {
         tool_allowlist: Array.isArray(a.toolAllowlist) ? JSON.stringify(a.toolAllowlist) : '*',
         max_turns: a.maxTurns ?? null,
         max_tokens: a.maxTokens ?? null,
-        is_default: a.isDefault ? 1 : 0,
+        is_default: 0, // Don't set via upsert — use setDefaultAgent below to enforce single default
         enabled: 1,
         seeded_from_config: 1
       });
-      if (a.isDefault) hasDefault = true;
+      if (a.isDefault) defaultAgentId = a.id;
     }
 
-    // If no explicit default, set the first agent as default
-    if (!hasDefault && !getDefaultAgent(this._db)) {
+    // Enforce single default via setDefaultAgent (atomic clear + set)
+    if (defaultAgentId) {
+      setDefaultAgent(this._db, defaultAgentId);
+    } else if (!getDefaultAgent(this._db)) {
       const first = agents.find(a => a.id && a.displayName);
       if (first) setDefaultAgent(this._db, first.id);
     }

@@ -75,10 +75,17 @@ describe('AgentRegistry', () => {
       expect(result.toolRows).toHaveLength(2);
     });
 
-    it('handles malformed JSON allowlist gracefully', () => {
+    it('malformed JSON allowlist returns empty (fail closed)', () => {
       const agent = { tool_allowlist: 'not-json' };
       const result = registry.filterTools(loaded, agent);
-      expect(result.tools).toHaveLength(3); // pass all through
+      expect(result.tools).toHaveLength(0);
+      expect(result.toolRows).toHaveLength(0);
+    });
+
+    it('non-array JSON allowlist returns empty (fail closed)', () => {
+      const agent = { tool_allowlist: '{"foo":"bar"}' };
+      const result = registry.filterTools(loaded, agent);
+      expect(result.tools).toHaveLength(0);
     });
   });
 
@@ -103,7 +110,7 @@ describe('AgentRegistry', () => {
         default_model: 'gpt-4o',
         default_hitl_level: 'paranoid',
         allow_user_model_select: 1,
-        allow_user_hitl_config: 0,
+        allow_user_hitl_config: 1,
         max_turns: 5,
         max_tokens: 2048
       };
@@ -111,9 +118,21 @@ describe('AgentRegistry', () => {
       expect(result.defaultModel).toBe('gpt-4o');
       expect(result.defaultHitlLevel).toBe('paranoid');
       expect(result.allowUserModelSelect).toBe(true);
-      expect(result.allowUserHitlConfig).toBe(false);
+      expect(result.allowUserHitlConfig).toBe(true);
       expect(result.maxTurns).toBe(5);
       expect(result.maxTokens).toBe(2048);
+    });
+
+    it('boolean flags with DB default 0 do not override base config', () => {
+      const base = { ...baseConfig, allowUserModelSelect: true, allowUserHitlConfig: true };
+      const agent = {
+        allow_user_model_select: 0,
+        allow_user_hitl_config: 0
+      };
+      const result = registry.buildAgentConfig(base, agent);
+      // DB default 0 should NOT override base config true
+      expect(result.allowUserModelSelect).toBe(true);
+      expect(result.allowUserHitlConfig).toBe(true);
     });
 
     it('preserves base config values for null agent fields', () => {
@@ -222,6 +241,38 @@ describe('AgentRegistry', () => {
       reg.seedFromConfig();
 
       expect(reg.getAllAgents()).toHaveLength(1);
+    });
+
+    it('does not overwrite admin-edited agents (seeded_from_config=0)', () => {
+      // Simulate admin creating an agent directly (not from config)
+      upsertAgent(db, { agent_id: 'support', display_name: 'Admin Edited', seeded_from_config: 0 });
+
+      const config = {
+        agents: [{ id: 'support', displayName: 'Config Version' }]
+      };
+      const reg = makeAgentRegistry(config, db);
+      reg.seedFromConfig();
+
+      // Should NOT overwrite admin-edited agent
+      const agent = reg.getAgent('support');
+      expect(agent.display_name).toBe('Admin Edited');
+    });
+
+    it('enforces single default when multiple isDefault in config', () => {
+      const config = {
+        agents: [
+          { id: 'a1', displayName: 'Agent 1', isDefault: true },
+          { id: 'a2', displayName: 'Agent 2', isDefault: true }
+        ]
+      };
+      const reg = makeAgentRegistry(config, db);
+      reg.seedFromConfig();
+
+      // Only one agent should be default (the last one with isDefault)
+      const all = reg.getAllAgents();
+      const defaults = all.filter(a => a.is_default === 1);
+      expect(defaults).toHaveLength(1);
+      expect(defaults[0].agent_id).toBe('a2');
     });
 
     it('does nothing when agents array is empty or absent', () => {

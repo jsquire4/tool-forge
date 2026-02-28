@@ -37,7 +37,13 @@ export async function handleChat(req, res, ctx) {
   }
 
   // 2. Parse body
-  const body = await readBody(req);
+  let body;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    sendJson(res, 413, { error: err.message });
+    return;
+  }
   if (!body.message) {
     sendJson(res, 400, { error: 'message is required' });
     return;
@@ -87,7 +93,7 @@ export async function handleChat(req, res, ctx) {
 
   // 9. Load promoted tools (with agent allowlist filtering)
   const allowlist = agent?.tool_allowlist ?? '*';
-  const parsedAllowlist = (allowlist !== '*') ? (() => { try { return JSON.parse(allowlist); } catch { return '*'; } })() : '*';
+  const parsedAllowlist = (allowlist !== '*') ? (() => { try { const parsed = JSON.parse(allowlist); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : '*';
   const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
 
   // 10. Start SSE stream
@@ -146,8 +152,11 @@ export async function handleChat(req, res, ctx) {
 
     let assistantText = '';
     for await (const event of gen) {
-      // HITL fix: intercept hitl events, persist pause state, attach resumeToken
+      // HITL fix: intercept hitl events, persist partial text, persist pause state, attach resumeToken
       if (event.type === 'hitl' && hitlEngine) {
+        if (assistantText) {
+          await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id);
+        }
         const resumeToken = await hitlEngine.pause({
           sessionId,
           agentId: agent?.agent_id ?? null,
@@ -163,6 +172,7 @@ export async function handleChat(req, res, ctx) {
           message: event.message,
           resumeToken
         });
+        assistantText = '';
         continue;
       }
 

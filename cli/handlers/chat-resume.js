@@ -35,7 +35,13 @@ export async function handleChatResume(req, res, ctx) {
   }
 
   // 2. Parse body
-  const body = await readBody(req);
+  let body;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    sendJson(res, 413, { error: err.message });
+    return;
+  }
   if (!body.resumeToken) {
     sendJson(res, 400, { error: 'resumeToken is required' });
     return;
@@ -81,7 +87,7 @@ export async function handleChatResume(req, res, ctx) {
 
   // Load promoted tools with agent allowlist
   const allowlist = agent?.tool_allowlist ?? '*';
-  const parsedAllowlist = (allowlist !== '*') ? (() => { try { return JSON.parse(allowlist); } catch { return '*'; } })() : '*';
+  const parsedAllowlist = (allowlist !== '*') ? (() => { try { const parsed = JSON.parse(allowlist); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : '*';
   const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
 
   // Start SSE
@@ -135,8 +141,11 @@ export async function handleChatResume(req, res, ctx) {
 
     let assistantText = '';
     for await (const event of gen) {
-      // Handle nested HITL pauses during resume
+      // Handle nested HITL pauses during resume — persist partial text first
       if (event.type === 'hitl' && hitlEngine) {
+        if (assistantText && pausedState.sessionId) {
+          await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+        }
         const resumeToken = await hitlEngine.pause({
           sessionId: pausedState.sessionId,
           agentId: agent?.agent_id ?? pausedState.agentId ?? null,
@@ -152,6 +161,7 @@ export async function handleChatResume(req, res, ctx) {
           message: event.message,
           resumeToken
         });
+        assistantText = '';
         continue;
       }
 

@@ -7,9 +7,10 @@
  *   custom  — user-provided function loaded from verifiersDir
  *
  * Returns worst outcome: block > warn > pass.
+ * Block short-circuits (stops pipeline immediately).
  */
 
-import { insertVerifierResult } from './db.js';
+import { insertVerifierResult, getVerifiersForTool as dbGetVerifiersForTool } from './db.js';
 
 const OUTCOME_SEVERITY = { pass: 0, warn: 1, block: 2 };
 
@@ -25,17 +26,90 @@ export class VerifierRunner {
   }
 
   /**
-   * Register verifiers for a tool.
+   * Register verifiers for a tool (manual/programmatic registration).
    * @param {string} toolName
-   * @param {Array<{ name: string, type: 'schema'|'pattern'|'custom', spec: object }>} verifiers
+   * @param {Array<{ name: string, type: 'schema'|'pattern'|'custom', spec: object, order?: string }>} verifiers
    */
   registerVerifiers(toolName, verifiers) {
     this._verifiers.set(toolName, verifiers);
   }
 
   /**
+   * Load all enabled verifiers and their bindings from the DB.
+   * Builds the internal _verifiers Map keyed by tool_name.
+   * Wildcard bindings stored under '*'.
+   *
+   * For custom type: spec_json = { filePath, exportName }. Dynamic import().
+   * If file missing → register a warn-only stub.
+   *
+   * @param {import('better-sqlite3').Database} db
+   */
+  async loadFromDb(db) {
+    const targetDb = db || this._db;
+    if (!targetDb) return;
+
+    // Get all enabled verifiers with their bindings
+    const allVerifiers = targetDb.prepare(
+      'SELECT * FROM verifier_registry WHERE enabled = 1 ORDER BY aciru_order ASC'
+    ).all();
+
+    const allBindings = targetDb.prepare(
+      'SELECT * FROM verifier_tool_bindings WHERE enabled = 1'
+    ).all();
+
+    // Build a map: tool_name → sorted verifier specs
+    const toolMap = new Map();
+
+    for (const binding of allBindings) {
+      const verifier = allVerifiers.find(v => v.verifier_name === binding.verifier_name);
+      if (!verifier) continue;
+
+      let spec;
+      try {
+        spec = JSON.parse(verifier.spec_json);
+      } catch {
+        continue; // skip malformed
+      }
+
+      const entry = {
+        name: verifier.verifier_name,
+        type: verifier.type,
+        order: verifier.aciru_order,
+        spec
+      };
+
+      // For custom verifiers, resolve the function
+      if (verifier.type === 'custom' && spec.filePath) {
+        try {
+          const mod = await import(spec.filePath);
+          const fn = mod[spec.exportName || 'verify'] || mod.default;
+          if (typeof fn === 'function') {
+            entry.spec = { ...spec, fn };
+          } else {
+            entry.spec = { fn: () => ({ outcome: 'warn', message: `Custom verifier "${verifier.verifier_name}": no verify function found` }) };
+          }
+        } catch {
+          entry.spec = { fn: () => ({ outcome: 'warn', message: `Custom verifier "${verifier.verifier_name}": file not found or import failed` }) };
+        }
+      }
+
+      const toolName = binding.tool_name;
+      if (!toolMap.has(toolName)) toolMap.set(toolName, []);
+      toolMap.get(toolName).push(entry);
+    }
+
+    // Sort each tool's verifiers by order
+    for (const [key, verifiers] of toolMap) {
+      verifiers.sort((a, b) => a.order.localeCompare(b.order));
+      this._verifiers.set(key, verifiers);
+    }
+  }
+
+  /**
    * Run all registered verifiers for a tool against the call result.
-   * Returns worst outcome across all verifiers.
+   * Merges tool-specific verifiers + wildcard ('*') verifiers.
+   * Deduplicates by verifier name. Sorts by ACIRU order.
+   * Block short-circuits (returns immediately).
    *
    * @param {string} toolName
    * @param {object} args — tool call input
@@ -43,14 +117,29 @@ export class VerifierRunner {
    * @returns {{ outcome: 'pass'|'warn'|'block', message: string|null, verifierName: string|null }}
    */
   async verify(toolName, args, result) {
-    const verifiers = this._verifiers.get(toolName);
-    if (!verifiers || verifiers.length === 0) {
+    const toolSpecific = this._verifiers.get(toolName) || [];
+    const wildcards = this._verifiers.get('*') || [];
+
+    // Merge and deduplicate by name
+    const seen = new Set();
+    const merged = [];
+    for (const v of [...toolSpecific, ...wildcards]) {
+      if (!seen.has(v.name)) {
+        seen.add(v.name);
+        merged.push(v);
+      }
+    }
+
+    if (merged.length === 0) {
       return { outcome: 'pass', message: null, verifierName: null };
     }
 
+    // Sort by order field if present
+    merged.sort((a, b) => (a.order ?? 'Z-9999').localeCompare(b.order ?? 'Z-9999'));
+
     let worst = { outcome: 'pass', message: null, verifierName: null };
 
-    for (const v of verifiers) {
+    for (const v of merged) {
       let vResult;
       try {
         switch (v.type) {
@@ -68,6 +157,11 @@ export class VerifierRunner {
         }
       } catch (err) {
         vResult = { outcome: 'warn', message: `Verifier "${v.name}" threw: ${err.message}` };
+      }
+
+      // Block → short-circuit immediately
+      if (vResult.outcome === 'block') {
+        return { ...vResult, verifierName: v.name };
       }
 
       if (OUTCOME_SEVERITY[vResult.outcome] > OUTCOME_SEVERITY[worst.outcome]) {

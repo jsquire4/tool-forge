@@ -4,6 +4,8 @@ import { makePromptStore } from '../prompt-store.js';
 import { makePreferenceStore } from '../preference-store.js';
 import { SqliteConversationStore } from '../conversation-store.js';
 import { createAuth } from '../auth.js';
+import { VerifierRunner } from '../verifier-runner.js';
+import { upsertVerifier, upsertVerifierBinding, upsertToolRegistry } from '../db.js';
 import { createHmac } from 'crypto';
 
 // Mock react-engine to avoid real LLM calls
@@ -53,7 +55,7 @@ function makeRes() {
   };
 }
 
-function makeCtx(db) {
+function makeCtx(db, opts = {}) {
   const config = {
     auth: { mode: 'trust', claimsPath: 'sub' },
     defaultModel: 'claude-sonnet-4-6',
@@ -67,6 +69,8 @@ function makeCtx(db) {
     promptStore: makePromptStore(config, db),
     preferenceStore: makePreferenceStore(config, db),
     conversationStore: new SqliteConversationStore(db),
+    verifierRunner: opts.verifierRunner ?? null,
+    hitlEngine: opts.hitlEngine ?? null,
     db,
     config,
     env: { ANTHROPIC_API_KEY: 'test-key' }
@@ -162,5 +166,75 @@ describe('handleChat', () => {
     expect(history.length).toBeGreaterThanOrEqual(1);
     expect(history[0].content).toBe('hello');
     expect(history[0].role).toBe('user');
+  });
+
+  describe('verifier hooks', () => {
+    it('registered verifier producing warn → SSE stream contains tool_warning event', async () => {
+      const token = makeJwt({ sub: 'user-1' });
+      const res = makeRes();
+
+      // Register a tool + verifier that warns
+      upsertToolRegistry(db, { tool_name: 'test_tool', lifecycle_state: 'promoted', spec_json: '{"name":"test_tool","description":"test","schema":{}}' });
+      upsertVerifier(db, { verifier_name: 'warn-check', type: 'pattern', aciru_order: 'I-0001', spec_json: JSON.stringify({ reject: 'bad', outcome: 'warn' }) });
+      upsertVerifierBinding(db, { verifier_name: 'warn-check', tool_name: 'test_tool' });
+
+      const verifierRunner = new VerifierRunner(db);
+      const ctx = makeCtx(db, { verifierRunner });
+
+      // Mock reactLoop to emit a tool_warning
+      reactLoop.mockReturnValue((async function* () {
+        yield { type: 'tool_call', tool: 'test_tool', args: {}, id: 'tc-1' };
+        yield { type: 'tool_result', tool: 'test_tool', result: { text: 'bad result' }, id: 'tc-1' };
+        yield { type: 'tool_warning', tool: 'test_tool', message: 'Result matches reject pattern: bad', verifier: 'warn-check' };
+        yield { type: 'done', usage: {} };
+      })());
+
+      await handleChat(makeReq({ message: 'hi' }, token), res, ctx);
+
+      const eventLines = res._chunks.join('');
+      expect(eventLines).toContain('event: tool_warning');
+    });
+
+    it('registered verifier producing block → SSE stream contains hitl event', async () => {
+      const token = makeJwt({ sub: 'user-1' });
+      const res = makeRes();
+
+      upsertToolRegistry(db, { tool_name: 'block_tool', lifecycle_state: 'promoted', spec_json: '{"name":"block_tool","description":"test","schema":{}}' });
+      upsertVerifier(db, { verifier_name: 'block-check', type: 'schema', aciru_order: 'A-0001', spec_json: JSON.stringify({ required: ['id'] }) });
+      upsertVerifierBinding(db, { verifier_name: 'block-check', tool_name: 'block_tool' });
+
+      const verifierRunner = new VerifierRunner(db);
+      const ctx = makeCtx(db, { verifierRunner });
+
+      // Mock reactLoop to emit hitl from verifier block
+      reactLoop.mockReturnValue((async function* () {
+        yield { type: 'tool_call', tool: 'block_tool', args: {}, id: 'tc-2' };
+        yield { type: 'hitl', tool: 'block_tool', message: 'Verifier blocked tool result', verifier: 'block-check' };
+      })());
+
+      await handleChat(makeReq({ message: 'do something' }, token), res, ctx);
+
+      const eventLines = res._chunks.join('');
+      expect(eventLines).toContain('event: hitl');
+    });
+
+    it('verifierRunner is loaded from DB on each request', async () => {
+      const token = makeJwt({ sub: 'user-1' });
+      const res = makeRes();
+
+      const verifierRunner = new VerifierRunner(db);
+      const loadSpy = vi.spyOn(verifierRunner, 'loadFromDb');
+
+      const ctx = makeCtx(db, { verifierRunner });
+
+      reactLoop.mockReturnValue((async function* () {
+        yield { type: 'text', content: 'Hi' };
+        yield { type: 'done', usage: {} };
+      })());
+
+      await handleChat(makeReq({ message: 'hi' }, token), res, ctx);
+
+      expect(loadSpy).toHaveBeenCalledWith(db);
+    });
   });
 });

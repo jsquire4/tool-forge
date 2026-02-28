@@ -33,6 +33,7 @@ import { handleChatResume } from './handlers/chat-resume.js';
 import { handleAdminConfig } from './handlers/admin.js';
 import { handleGetPreferences, handlePutPreferences } from './handlers/preferences.js';
 import { createDriftMonitor } from './drift-background.js';
+import { VerifierRunner } from './verifier-runner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -259,6 +260,23 @@ const server = createHttpServer(async (req, res) => {
     }
   }
 
+  // ── Widget static file serving ───────────────────────────────────────────
+  if (url.pathname.startsWith('/widget/')) {
+    const relativePath = url.pathname.slice('/widget/'.length);
+    const widgetDir = resolve(PROJECT_ROOT, 'widget');
+    const filePath = resolve(widgetDir, relativePath);
+    // Path traversal prevention
+    if (!filePath.startsWith(widgetDir) || !existsSync(filePath)) {
+      json(res, 404, { error: 'not found' });
+      return;
+    }
+    const ext = filePath.split('.').pop();
+    const mime = { html: 'text/html', js: 'application/javascript', css: 'text/css' }[ext] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600' });
+    res.end(readFileSync(filePath));
+    return;
+  }
+
   json(res, 404, { error: 'not found' });
 });
 
@@ -324,7 +342,8 @@ async function main() {
       const preferenceStore = makePreferenceStore(config, mcpDb);
       const conversationStore = makeConversationStore(config, mcpDb);
       const hitlEngine = makeHitlEngine(config, mcpDb);
-      sidecarCtx = { auth, promptStore, preferenceStore, conversationStore, hitlEngine, db: mcpDb, config, env };
+      const verifierRunner = new VerifierRunner(mcpDb, config);
+      sidecarCtx = { auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, db: mcpDb, config, env };
       process.stdout.write('[forge-service] Sidecar context initialized\n');
     } catch (err) {
       process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);

@@ -17,7 +17,7 @@
 
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
-import { getAllToolRegistry } from '../db.js';
+import { getAllToolRegistry, getVerifiersForTool } from '../db.js';
 import { readBody, sendJson } from '../http-utils.js';
 
 /**
@@ -91,7 +91,34 @@ export async function handleChatResume(req, res, ctx) {
   // Start SSE
   const sse = initSSE(res);
 
-  const hooks = ctx.hooks ?? {};
+  // Build per-request hooks
+  const { hitlEngine: hitlEng2, verifierRunner } = ctx;
+  if (verifierRunner) {
+    try { await verifierRunner.loadFromDb(db); } catch { /* non-fatal */ }
+  }
+
+  const hooks = {
+    shouldPause(toolCall) {
+      if (!hitlEng2) return { pause: false };
+      let toolSpec = {};
+      const row = toolRows.find(r => r.tool_name === toolCall.name);
+      if (row?.spec_json) {
+        try { toolSpec = JSON.parse(row.spec_json); } catch { /* ignore */ }
+      }
+      return {
+        pause: hitlEng2.shouldPause(effective.hitlLevel, toolSpec),
+        message: `Tool "${toolCall.name}" requires confirmation`
+      };
+    },
+    async onAfterToolCall(toolName, args, result) {
+      if (!verifierRunner) return { outcome: 'pass' };
+      const vResult = await verifierRunner.verify(toolName, args, result);
+      if (vResult.outcome !== 'pass') {
+        verifierRunner.logResult(pausedState.sessionId, toolName, vResult);
+      }
+      return vResult;
+    }
+  };
 
   try {
     // Continue from paused conversation messages

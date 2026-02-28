@@ -140,6 +140,30 @@ CREATE TABLE IF NOT EXISTS verifier_results (
 );
 CREATE INDEX IF NOT EXISTS idx_verifier_results_tool
   ON verifier_results(tool_name, created_at);
+
+CREATE TABLE IF NOT EXISTS verifier_registry (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  verifier_name TEXT NOT NULL UNIQUE,
+  display_name TEXT,
+  type TEXT NOT NULL CHECK(type IN ('schema','pattern','custom')),
+  aciru_category TEXT NOT NULL DEFAULT 'U',
+  aciru_order TEXT NOT NULL DEFAULT 'U-9999',
+  spec_json TEXT NOT NULL,
+  description TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verifier_tool_bindings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  verifier_name TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  UNIQUE(verifier_name, tool_name),
+  FOREIGN KEY (verifier_name) REFERENCES verifier_registry(verifier_name)
+);
 `;
 
 /**
@@ -753,4 +777,122 @@ export function getVerifierResultsByTool(db, toolName, limit = 50) {
     ORDER BY created_at DESC
     LIMIT ?
   `).all(toolName, limit);
+}
+
+// ── verifier_registry ───────────────────────────────────────────────────────
+
+/**
+ * Upsert a verifier into the registry. Sets enabled=1 on insert/update.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ verifier_name: string; display_name?: string; type: string; aciru_category?: string; aciru_order?: string; spec_json: string; description?: string }} row
+ */
+export function upsertVerifier(db, row) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO verifier_registry (verifier_name, display_name, type, aciru_category, aciru_order, spec_json, description, enabled, created_at, updated_at)
+    VALUES (@verifier_name, @display_name, @type, @aciru_category, @aciru_order, @spec_json, @description, 1, @now, @now)
+    ON CONFLICT(verifier_name) DO UPDATE SET
+      display_name = excluded.display_name,
+      type = excluded.type,
+      aciru_category = excluded.aciru_category,
+      aciru_order = excluded.aciru_order,
+      spec_json = excluded.spec_json,
+      description = excluded.description,
+      enabled = 1,
+      updated_at = excluded.updated_at
+  `).run({
+    verifier_name: row.verifier_name,
+    display_name: row.display_name ?? null,
+    type: row.type,
+    aciru_category: row.aciru_category ?? 'U',
+    aciru_order: row.aciru_order ?? 'U-9999',
+    spec_json: row.spec_json,
+    description: row.description ?? null,
+    now
+  });
+}
+
+/**
+ * Get a single verifier by name.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} verifierName
+ * @returns {object|null}
+ */
+export function getVerifier(db, verifierName) {
+  return db.prepare('SELECT * FROM verifier_registry WHERE verifier_name = ?').get(verifierName) ?? null;
+}
+
+/**
+ * Get all verifiers ordered by aciru_order.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {object[]}
+ */
+export function getAllVerifiers(db) {
+  return db.prepare('SELECT * FROM verifier_registry ORDER BY aciru_order ASC').all();
+}
+
+/**
+ * Delete a verifier and its bindings in a transaction.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} verifierName
+ */
+export function deleteVerifier(db, verifierName) {
+  db.transaction(() => {
+    db.prepare('DELETE FROM verifier_tool_bindings WHERE verifier_name = ?').run(verifierName);
+    db.prepare('DELETE FROM verifier_registry WHERE verifier_name = ?').run(verifierName);
+  })();
+}
+
+/**
+ * Bind a verifier to a tool. Use tool_name='*' for wildcard.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ verifier_name: string; tool_name: string }} binding
+ */
+export function upsertVerifierBinding(db, binding) {
+  db.prepare(`
+    INSERT OR IGNORE INTO verifier_tool_bindings (verifier_name, tool_name, enabled, created_at)
+    VALUES (@verifier_name, @tool_name, 1, @created_at)
+  `).run({
+    verifier_name: binding.verifier_name,
+    tool_name: binding.tool_name,
+    created_at: new Date().toISOString()
+  });
+}
+
+/**
+ * Remove a verifier-tool binding.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} verifierName
+ * @param {string} toolName
+ */
+export function removeVerifierBinding(db, verifierName, toolName) {
+  db.prepare('DELETE FROM verifier_tool_bindings WHERE verifier_name = ? AND tool_name = ?')
+    .run(verifierName, toolName);
+}
+
+/**
+ * Get all enabled verifiers bound to a tool (includes wildcard '*' bindings).
+ * Hot-path query — called per sidecar request.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName
+ * @returns {object[]}
+ */
+export function getVerifiersForTool(db, toolName) {
+  return db.prepare(`
+    SELECT vr.* FROM verifier_registry vr
+    INNER JOIN verifier_tool_bindings vtb ON vr.verifier_name = vtb.verifier_name
+    WHERE (vtb.tool_name = ? OR vtb.tool_name = '*')
+      AND vtb.enabled = 1 AND vr.enabled = 1
+    ORDER BY vr.aciru_order ASC
+  `).all(toolName);
+}
+
+/**
+ * Get all tool bindings for a verifier.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} verifierName
+ * @returns {object[]}
+ */
+export function getBindingsForVerifier(db, verifierName) {
+  return db.prepare('SELECT * FROM verifier_tool_bindings WHERE verifier_name = ?').all(verifierName);
 }

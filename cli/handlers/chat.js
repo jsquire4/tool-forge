@@ -14,7 +14,7 @@
 
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
-import { getAllToolRegistry } from '../db.js';
+import { getAllToolRegistry, getVerifiersForTool } from '../db.js';
 import { readBody, sendJson } from '../http-utils.js';
 
 /**
@@ -94,8 +94,34 @@ export async function handleChat(req, res, ctx) {
   // Send session info
   sse.send('session', { sessionId });
 
-  // 9. Build hooks (default pass-through; populated by Phase 3)
-  const hooks = ctx.hooks ?? {};
+  // 9. Build per-request hooks
+  const { hitlEngine, verifierRunner } = ctx;
+  if (verifierRunner) {
+    try { await verifierRunner.loadFromDb(db); } catch { /* non-fatal */ }
+  }
+
+  const hooks = {
+    shouldPause(toolCall) {
+      if (!hitlEngine) return { pause: false };
+      let toolSpec = {};
+      const row = toolRows.find(r => r.tool_name === toolCall.name);
+      if (row?.spec_json) {
+        try { toolSpec = JSON.parse(row.spec_json); } catch { /* ignore */ }
+      }
+      return {
+        pause: hitlEngine.shouldPause(effective.hitlLevel, toolSpec),
+        message: `Tool "${toolCall.name}" requires confirmation`
+      };
+    },
+    async onAfterToolCall(toolName, args, result) {
+      if (!verifierRunner) return { outcome: 'pass' };
+      const vResult = await verifierRunner.verify(toolName, args, result);
+      if (vResult.outcome !== 'pass') {
+        verifierRunner.logResult(sessionId, toolName, vResult);
+      }
+      return vResult;
+    }
+  };
 
   // 10. Run ReAct loop
   try {

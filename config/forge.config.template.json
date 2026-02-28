@@ -11,6 +11,8 @@
   },
 
   "api": {
+    "baseUrl": "http://localhost:3000",
+    "_baseUrlComment": "Base URL for MCP tool routing. Tool mcpRouting.endpoint paths are appended to this.",
     "discovery": {
       "type": "openapi",
       "url": "http://localhost:3333/api-json",

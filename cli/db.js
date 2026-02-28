@@ -98,6 +98,17 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_session
   ON conversations(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS mcp_call_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool_name   TEXT NOT NULL,
+  called_at   TEXT NOT NULL,
+  input_json  TEXT,
+  output_json TEXT,
+  status_code INTEGER,
+  latency_ms  INTEGER,
+  error       TEXT
+);
 `;
 
 /**
@@ -518,20 +529,10 @@ export function getModelComparisonData(db, toolName) {
 
 // ── conversations ───────────────────────────────────────────────────────────
 
-/**
- * Create a new session ID using Node's built-in crypto.randomUUID.
- * @returns {string} UUID session ID
- */
 export function createSession() {
   return randomUUID();
 }
 
-/**
- * Insert a conversation message row.
- * @param {import('better-sqlite3').Database} db
- * @param {{ session_id: string; stage: string; role: 'user'|'assistant'|'system'; content: string }} row
- * @returns {number} lastInsertRowid
- */
 export function insertConversationMessage(db, { session_id, stage, role, content }) {
   const result = db.prepare(`
     INSERT INTO conversations (session_id, stage, role, content, created_at)
@@ -546,12 +547,6 @@ export function insertConversationMessage(db, { session_id, stage, role, content
   return result.lastInsertRowid;
 }
 
-/**
- * Get all messages for a session ordered by created_at ASC.
- * @param {import('better-sqlite3').Database} db
- * @param {string} session_id
- * @returns {object[]}
- */
 export function getConversationHistory(db, session_id) {
   return db.prepare(`
     SELECT * FROM conversations
@@ -560,12 +555,6 @@ export function getConversationHistory(db, session_id) {
   `).all(session_id);
 }
 
-/**
- * Get incomplete sessions — sessions that have no system row with content='[COMPLETE]'.
- * Returns [{ session_id, stage, last_updated }] ordered by last_updated DESC.
- * @param {import('better-sqlite3').Database} db
- * @returns {Array<{ session_id: string; stage: string; last_updated: string }>}
- */
 export function getIncompleteSessions(db) {
   return db.prepare(`
     SELECT
@@ -581,4 +570,29 @@ export function getIncompleteSessions(db) {
     GROUP BY c.session_id
     ORDER BY last_updated DESC
   `).all();
+}
+
+// ── mcp_call_log ───────────────────────────────────────────────────────────
+
+export function insertMcpCallLog(db, row) {
+  const result = db.prepare(`
+    INSERT INTO mcp_call_log (tool_name, called_at, input_json, output_json, status_code, latency_ms, error)
+    VALUES (@tool_name, @called_at, @input_json, @output_json, @status_code, @latency_ms, @error)
+  `).run({
+    tool_name: row.tool_name,
+    called_at: new Date().toISOString(),
+    input_json: row.input_json ?? null,
+    output_json: row.output_json ?? null,
+    status_code: row.status_code ?? null,
+    latency_ms: row.latency_ms ?? null,
+    error: row.error ?? null
+  });
+  return result.lastInsertRowid;
+}
+
+export function getMcpCallLog(db, toolName = null, limit = 50) {
+  if (toolName == null) {
+    return db.prepare(`SELECT * FROM mcp_call_log ORDER BY id DESC LIMIT ?`).all(limit);
+  }
+  return db.prepare(`SELECT * FROM mcp_call_log WHERE tool_name = ? ORDER BY id DESC LIMIT ?`).all(toolName, limit);
 }

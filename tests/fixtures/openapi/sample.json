@@ -1,0 +1,70 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Sample API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://localhost:3000" }
+  ],
+  "paths": {
+    "/api/portfolio/summary": {
+      "get": {
+        "operationId": "getPortfolioSummary",
+        "summary": "Get portfolio summary",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "User identifier"
+          }
+        ]
+      }
+    },
+    "/api/portfolio/holdings": {
+      "get": {
+        "operationId": "getHoldings",
+        "summary": "List portfolio holdings"
+      },
+      "post": {
+        "operationId": "createHolding",
+        "summary": "Add a holding to portfolio"
+      }
+    },
+    "/api/trades": {
+      "get": {
+        "operationId": "listTrades",
+        "summary": "List all trades"
+      },
+      "post": {
+        "operationId": "createTrade",
+        "summary": "Create a new trade"
+      }
+    },
+    "/api/trades/{tradeId}": {
+      "get": {
+        "operationId": "getTrade",
+        "summary": "Get a specific trade",
+        "parameters": [
+          {
+            "name": "tradeId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteTrade",
+        "summary": "Cancel a trade"
+      }
+    },
+    "/api/market/prices": {
+      "get": {
+        "operationId": "getMarketPrices",
+        "summary": "Get current market prices"
+      }
+    }
+  }
+}

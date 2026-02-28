@@ -22,6 +22,17 @@ import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
 import { createMcpServer } from './mcp-server.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mergeDefaults } from './config-schema.js';
+import { createAuth } from './auth.js';
+import { makePromptStore } from './prompt-store.js';
+import { makePreferenceStore } from './preference-store.js';
+import { makeConversationStore } from './conversation-store.js';
+import { makeHitlEngine } from './hitl-engine.js';
+import { handleChat } from './handlers/chat.js';
+import { handleChatResume } from './handlers/chat-resume.js';
+import { handleAdminConfig } from './handlers/admin.js';
+import { handleGetPreferences, handlePutPreferences } from './handlers/preferences.js';
+import { createDriftMonitor } from './drift-background.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -37,10 +48,16 @@ const queue = [];
 let working = false;
 const waiters = []; // pending /next long-poll response objects
 
+// Sidecar mode: --mode=sidecar disables watchdog, binds 0.0.0.0
+const sidecarMode = process.argv.includes('--mode=sidecar');
+
 // MCP runtime state — initialized in main() after config and lock are ready
 let forgeMcpKey = null;  // null = unset = fail-closed
 let mcpDb = null;
 let mcpConfig = null;
+
+// Sidecar context — initialized when sidecar mode is active
+let sidecarCtx = null;
 
 /**
  * Parse a .env file into a key=value object.
@@ -225,6 +242,23 @@ const server = createHttpServer(async (req, res) => {
     return;
   }
 
+  // ── Sidecar routes (only when context is initialized) ───────────────────
+  if (sidecarCtx) {
+    if (url.pathname === '/agent-api/chat' && req.method === 'POST') {
+      return handleChat(req, res, sidecarCtx);
+    }
+    if (url.pathname === '/agent-api/chat/resume' && req.method === 'POST') {
+      return handleChatResume(req, res, sidecarCtx);
+    }
+    if (url.pathname === '/agent-api/user/preferences') {
+      if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
+      if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
+    }
+    if (url.pathname.startsWith('/forge-admin/config')) {
+      return handleAdminConfig(req, res, sidecarCtx);
+    }
+  }
+
   json(res, 404, { error: 'not found' });
 });
 
@@ -253,22 +287,28 @@ const watchdog = setInterval(() => {
 watchdog.unref();
 
 async function main() {
-  const port = await getPort();
+  const rawConfig = loadConfig();
+  const config = mergeDefaults(rawConfig);
+  const port = sidecarMode
+    ? (config.sidecar?.port ?? 8001)
+    : await getPort();
+  const bindHost = sidecarMode ? '0.0.0.0' : '127.0.0.1';
+
   server.on('error', (err) => {
     process.stderr.write(`forge-service listen error: ${err.message}\n`);
     process.exit(1);
   });
-  server.listen(port, '127.0.0.1', () => {
+  server.listen(port, bindHost, () => {
     writeLock(port);
-    process.stdout.write(`forge-service started on port ${port}\n`);
+    process.stdout.write(`forge-service started on ${bindHost}:${port}${sidecarMode ? ' (sidecar mode)' : ''}\n`);
 
-    // Load config and .env after lock is written
-    const config = loadConfig();
-    const env = loadDotEnv(resolve(PROJECT_ROOT, '.env'));
+    // Load .env after lock is written
+    const envFile = loadDotEnv(resolve(PROJECT_ROOT, '.env'));
+    const env = { ...process.env, ...envFile };
 
     // FORGE_MCP_KEY: check .env file first, then process.env
     // Empty string is treated as unset (fail-closed)
-    const rawKey = env.FORGE_MCP_KEY ?? process.env.FORGE_MCP_KEY ?? '';
+    const rawKey = envFile.FORGE_MCP_KEY ?? process.env.FORGE_MCP_KEY ?? '';
     forgeMcpKey = rawKey.trim() || null;
 
     // Initialize DB; if it fails, log and continue without MCP
@@ -277,10 +317,36 @@ async function main() {
       mcpDb = getDb(dbPath);
       mcpConfig = config;
       process.stdout.write('[forge-service] MCP server initialized\n');
+
+      // Initialize sidecar context (available for sidecar routes even outside --mode=sidecar)
+      const auth = createAuth(config.auth);
+      const promptStore = makePromptStore(config, mcpDb);
+      const preferenceStore = makePreferenceStore(config, mcpDb);
+      const conversationStore = makeConversationStore(config, mcpDb);
+      const hitlEngine = makeHitlEngine(config, mcpDb);
+      sidecarCtx = { auth, promptStore, preferenceStore, conversationStore, hitlEngine, db: mcpDb, config, env };
+      process.stdout.write('[forge-service] Sidecar context initialized\n');
     } catch (err) {
       process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);
       mcpDb = null;
       mcpConfig = null;
+    }
+
+    // In sidecar mode: disable watchdog, enable WAL, start drift monitor
+    if (sidecarMode) {
+      clearInterval(watchdog);
+      if (mcpDb) {
+        try {
+          mcpDb.pragma('journal_mode = WAL');
+          process.stdout.write('[forge-service] SQLite WAL mode enabled\n');
+        } catch (err) {
+          process.stderr.write(`[forge-service] WAL mode failed: ${err.message}\n`);
+        }
+        const driftMonitor = createDriftMonitor(config, mcpDb);
+        driftMonitor.start();
+        process.stdout.write('[forge-service] Background drift monitor started\n');
+      }
+      process.stdout.write(`[forge-service] Sidecar ready on ${bindHost}:${port}\n`);
     }
   });
 }

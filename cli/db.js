@@ -109,6 +109,37 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   latency_ms  INTEGER,
   error       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version TEXT NOT NULL,
+  content TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  activated_at TEXT,
+  notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id TEXT PRIMARY KEY,
+  model TEXT,
+  hitl_level TEXT CHECK(hitl_level IN ('autonomous','cautious','standard','paranoid')),
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verifier_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT,
+  tool_name TEXT NOT NULL,
+  verifier_name TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK(outcome IN ('pass','warn','block')),
+  message TEXT,
+  tool_call_input TEXT,
+  tool_call_output TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_verifier_results_tool
+  ON verifier_results(tool_name, created_at);
 `;
 
 /**
@@ -595,4 +626,131 @@ export function getMcpCallLog(db, toolName = null, limit = 50) {
     return db.prepare(`SELECT * FROM mcp_call_log ORDER BY id DESC LIMIT ?`).all(limit);
   }
   return db.prepare(`SELECT * FROM mcp_call_log WHERE tool_name = ? ORDER BY id DESC LIMIT ?`).all(toolName, limit);
+}
+
+// ── prompt_versions ─────────────────────────────────────────────────────────
+
+/**
+ * Get the currently active prompt version.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {object|null}
+ */
+export function getActivePrompt(db) {
+  return db.prepare(`SELECT * FROM prompt_versions WHERE is_active = 1`).get() ?? null;
+}
+
+/**
+ * Insert a new prompt version (inactive by default).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ version: string; content: string; notes?: string }} row
+ * @returns {number} lastInsertRowid
+ */
+export function insertPromptVersion(db, row) {
+  const result = db.prepare(`
+    INSERT INTO prompt_versions (version, content, is_active, created_at, notes)
+    VALUES (@version, @content, 0, @created_at, @notes)
+  `).run({
+    version: row.version,
+    content: row.content,
+    created_at: new Date().toISOString(),
+    notes: row.notes ?? null
+  });
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Activate a prompt version (deactivates all others in a transaction).
+ * @param {import('better-sqlite3').Database} db
+ * @param {number} id
+ */
+export function activatePromptVersion(db, id) {
+  db.transaction(() => {
+    db.prepare(`UPDATE prompt_versions SET is_active = 0, activated_at = NULL WHERE is_active = 1`).run();
+    db.prepare(`UPDATE prompt_versions SET is_active = 1, activated_at = ? WHERE id = ?`)
+      .run(new Date().toISOString(), id);
+  })();
+}
+
+/**
+ * Get all prompt versions ordered by created_at DESC.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {object[]}
+ */
+export function getAllPromptVersions(db) {
+  return db.prepare(`SELECT * FROM prompt_versions ORDER BY id DESC`).all();
+}
+
+// ── user_preferences ────────────────────────────────────────────────────────
+
+/**
+ * Get user preferences by userId.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @returns {object|null}
+ */
+export function getUserPreferences(db, userId) {
+  return db.prepare(`SELECT * FROM user_preferences WHERE user_id = ?`).get(userId) ?? null;
+}
+
+/**
+ * Upsert user preferences.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {{ model?: string; hitlLevel?: string }} prefs
+ */
+export function upsertUserPreferences(db, userId, prefs) {
+  db.prepare(`
+    INSERT INTO user_preferences (user_id, model, hitl_level, updated_at)
+    VALUES (@user_id, @model, @hitl_level, @updated_at)
+    ON CONFLICT(user_id) DO UPDATE SET
+      model = @model,
+      hitl_level = @hitl_level,
+      updated_at = @updated_at
+  `).run({
+    user_id: userId,
+    model: prefs.model ?? null,
+    hitl_level: prefs.hitlLevel ?? null,
+    updated_at: new Date().toISOString()
+  });
+}
+
+// ── verifier_results ────────────────────────────────────────────────────────
+
+/**
+ * Insert a verifier result record.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ session_id?: string; tool_name: string; verifier_name: string; outcome: string; message?: string; tool_call_input?: string; tool_call_output?: string }} row
+ * @returns {number} lastInsertRowid
+ */
+export function insertVerifierResult(db, row) {
+  const result = db.prepare(`
+    INSERT INTO verifier_results (session_id, tool_name, verifier_name, outcome, message, tool_call_input, tool_call_output, created_at)
+    VALUES (@session_id, @tool_name, @verifier_name, @outcome, @message, @tool_call_input, @tool_call_output, @created_at)
+  `).run({
+    session_id: row.session_id ?? null,
+    tool_name: row.tool_name,
+    verifier_name: row.verifier_name,
+    outcome: row.outcome,
+    message: row.message ?? null,
+    tool_call_input: row.tool_call_input ?? null,
+    tool_call_output: row.tool_call_output ?? null,
+    created_at: new Date().toISOString()
+  });
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Get verifier results for a tool, ordered by most recent.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} toolName
+ * @param {number} [limit=50]
+ * @returns {object[]}
+ */
+export function getVerifierResultsByTool(db, toolName, limit = 50) {
+  return db.prepare(`
+    SELECT * FROM verifier_results
+    WHERE tool_name = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(toolName, limit);
 }

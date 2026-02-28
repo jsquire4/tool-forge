@@ -29,9 +29,10 @@ function safeParseJson(str) {
  * @param {object} spec - Parsed tool spec with mcpRouting
  * @param {object} args - Tool call arguments
  * @param {object} config - forge config with api.baseUrl
+ * @param {string|null} [userJwt] - User JWT to forward as Authorization header
  * @returns {Promise<{ status: number; body: object; error: string|null }>}
  */
-async function callToolEndpoint(spec, args, config) {
+async function callToolEndpoint(spec, args, config, userJwt = null) {
   const baseUrl = (config.api?.baseUrl || 'http://localhost:3000').replace(/\/$/, '');
   const routing = spec.mcpRouting || {};
   const path = routing.endpoint || '/';
@@ -62,6 +63,10 @@ async function callToolEndpoint(spec, args, config) {
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     signal: AbortSignal.timeout(30_000)
   };
+  // Forward user JWT if present — allows the app's internal API to validate the user
+  if (userJwt) {
+    fetchOpts.headers['Authorization'] = `Bearer ${userJwt}`;
+  }
   if (['POST', 'PUT', 'PATCH'].includes(method) && Object.keys(bodyObj).length > 0) {
     fetchOpts.body = JSON.stringify(bodyObj);
   }

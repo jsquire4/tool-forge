@@ -1,0 +1,16 @@
+services:
+  forge:
+    build:
+      context: .
+      dockerfile: Dockerfile.sidecar
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./forge.db:/forge/forge.db
+      - ./forge.config.json:/forge/forge.config.json
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    restart: unless-stopped

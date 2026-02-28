@@ -1,0 +1,20 @@
+FROM node:24-alpine
+
+WORKDIR /forge
+
+# Install dependencies
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Copy application code
+COPY cli/ cli/
+COPY widget/ widget/
+
+# Expose sidecar port
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD wget -qO- http://localhost:8001/health || exit 1
+
+CMD ["node", "cli/forge-service.js", "--mode=sidecar"]

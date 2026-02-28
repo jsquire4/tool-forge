@@ -9,7 +9,6 @@
  *   row n-1: footer  (key hints, updated per view)
  */
 
-import blessed from 'blessed';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -24,6 +23,16 @@ function readLock() {
 }
 
 export async function runTui(config) {
+  let blessed;
+  try {
+    blessed = (await import('blessed')).default;
+  } catch {
+    throw new Error(
+      'The "blessed" package is required for the TUI but is not installed. ' +
+      'Install it with: npm install blessed'
+    );
+  }
+
   const screen = blessed.screen({ smartCSR: true, title: 'Tool Forge', fullUnicode: true });
 
   // ── Chrome ────────────────────────────────────────────────────────────────

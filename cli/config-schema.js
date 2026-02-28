@@ -12,6 +12,7 @@ export const CONFIG_DEFAULTS = {
   allowUserModelSelect: false,
   allowUserHitlConfig: false,
   adminKey: null,
+  database: { type: 'sqlite', url: null },
   conversation: { store: 'sqlite', window: 25, redis: {} },
   sidecar: { enabled: false, port: 8001 },
   agents: []
@@ -20,6 +21,7 @@ export const CONFIG_DEFAULTS = {
 const VALID_AUTH_MODES = ['verify', 'trust'];
 const VALID_HITL_LEVELS = ['autonomous', 'cautious', 'standard', 'paranoid'];
 const VALID_STORE_TYPES = ['sqlite', 'redis', 'postgres'];
+const VALID_DB_TYPES = ['sqlite', 'postgres'];
 
 /**
  * Deep merge raw config onto defaults. Only merges plain objects — arrays
@@ -84,6 +86,11 @@ export function validateConfig(raw = {}) {
     if (typeof port !== 'number' || port < 1 || port > 65535 || !Number.isInteger(port)) {
       errors.push(`sidecar.port must be an integer between 1 and 65535 (got ${port})`);
     }
+  }
+
+  // database.type
+  if (raw.database?.type !== undefined && !VALID_DB_TYPES.includes(raw.database.type)) {
+    errors.push(`database.type must be one of: ${VALID_DB_TYPES.join(', ')} (got "${raw.database.type}")`);
   }
 
   // conversation.window

@@ -12,6 +12,10 @@
  *   GET  /next     → long-poll (30s timeout), returns first item or 204
  *   POST /complete → pops queue[0], sets working=false, notifies waiters
  *   DELETE /shutdown → cleanup + exit
+ *
+ * Library exports:
+ *   buildSidecarContext(config, db, env)  — construct sidecar context object
+ *   createSidecarRouter(ctx, options)     — HTTP request handler for sidecar routes
  */
 
 import { createServer } from 'net';
@@ -29,6 +33,8 @@ import { makePromptStore } from './prompt-store.js';
 import { makePreferenceStore } from './preference-store.js';
 import { makeConversationStore } from './conversation-store.js';
 import { makeHitlEngine } from './hitl-engine.js';
+import { requireDependency } from './dep-check.js';
+import { sendJson } from './http-utils.js';
 import { handleChat } from './handlers/chat.js';
 import { handleChatSync } from './handlers/chat-sync.js';
 import { handleChatResume } from './handlers/chat-resume.js';
@@ -41,6 +47,145 @@ import { handleAgents } from './handlers/agents.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
+
+// ── Exported library functions ─────────────────────────────────────────────
+
+/**
+ * Build the sidecar context object from config, database, and environment.
+ * This is the shared state passed to all sidecar request handlers.
+ *
+ * Creates Redis/Postgres clients based on config when needed.
+ * Returns _redisClient and _pgPool for cleanup on shutdown.
+ *
+ * @param {object} config — merged config (after mergeDefaults)
+ * @param {import('better-sqlite3').Database} db
+ * @param {Record<string, string>} env — environment variables
+ * @returns {Promise<{ auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, agentRegistry, db, config, env, _redisClient, _pgPool }>}
+ */
+export async function buildSidecarContext(config, db, env = {}) {
+  const auth = createAuth(config.auth);
+  const promptStore = makePromptStore(config, db);
+  const preferenceStore = makePreferenceStore(config, db);
+
+  let redisClient = null;
+  let pgPool = null;
+  const storeType = config?.conversation?.store ?? 'sqlite';
+
+  if (storeType === 'redis') {
+    await requireDependency('redis');
+    const { createClient } = await import('redis');
+    const url = config?.conversation?.redis?.url ?? 'redis://localhost:6379';
+    redisClient = createClient({ url });
+    redisClient.on('error', err => process.stderr.write(`[sidecar] Redis: ${err.message}\n`));
+    await redisClient.connect();
+  }
+
+  if (storeType === 'postgres' || config?.database?.type === 'postgres') {
+    await requireDependency('pg');
+    const pg = await import('pg');
+    const Pool = pg.default?.Pool ?? pg.Pool;
+    const rawUrl = config?.database?.url;
+    const connStr = rawUrl?.startsWith('${') ? env[rawUrl.slice(2, -1)] : rawUrl;
+    pgPool = new Pool({ connectionString: connStr ?? undefined });
+  }
+
+  const conversationStore = makeConversationStore(config, db, pgPool);
+  const hitlEngine = makeHitlEngine(config, db, redisClient, pgPool);
+  const verifierRunner = new VerifierRunner(db, config);
+  const agentRegistry = makeAgentRegistry(config, db);
+  return { auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, agentRegistry, db, config, env, _redisClient: redisClient, _pgPool: pgPool };
+}
+
+/**
+ * Create an HTTP request handler for all sidecar routes.
+ *
+ * @param {object} ctx — sidecar context from buildSidecarContext()
+ * @param {object} [options]
+ * @param {string} [options.widgetDir] — directory for /widget/* static files (defaults to <project>/widget)
+ * @param {function} [options.mcpHandler] — optional async (req, res) handler for /mcp route
+ * @returns {function(import('http').IncomingMessage, import('http').ServerResponse): Promise<void>}
+ */
+export function createSidecarRouter(ctx, options = {}) {
+  const widgetDir = options.widgetDir || resolve(__dirname, '..', 'widget');
+  const mcpHandler = options.mcpHandler || null;
+
+  return async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+
+    // ── /mcp route (optional) ──────────────────────────────────────────────
+    if (mcpHandler && url.pathname.startsWith('/mcp')) {
+      return mcpHandler(req, res);
+    }
+
+    // ── /health ────────────────────────────────────────────────────────────
+    if (req.method === 'GET' && url.pathname === '/health') {
+      sendJson(res, 200, { status: 'ok' });
+      return;
+    }
+
+    // ── Sidecar API routes ─────────────────────────────────────────────────
+    // Normalise /agent-api/v1/* → /agent-api/* so versioned paths hit
+    // the same handlers without a proxy rewrite rule.
+    const sidecarPath = url.pathname.startsWith('/agent-api/v1/')
+      ? '/agent-api/' + url.pathname.slice('/agent-api/v1/'.length)
+      : url.pathname;
+
+    if (sidecarPath === '/agent-api/chat' && req.method === 'POST') {
+      return handleChat(req, res, ctx);
+    }
+    if (sidecarPath === '/agent-api/chat-sync' && req.method === 'POST') {
+      return handleChatSync(req, res, ctx);
+    }
+    if (sidecarPath === '/agent-api/chat/resume' && req.method === 'POST') {
+      return handleChatResume(req, res, ctx);
+    }
+    if (sidecarPath === '/agent-api/user/preferences') {
+      if (req.method === 'GET') return handleGetPreferences(req, res, ctx);
+      if (req.method === 'PUT') return handlePutPreferences(req, res, ctx);
+    }
+    if (url.pathname.startsWith('/forge-admin/agents')) {
+      return handleAgents(req, res, ctx);
+    }
+    if (url.pathname.startsWith('/forge-admin/config')) {
+      return handleAdminConfig(req, res, ctx);
+    }
+
+    // ── Widget static file serving ─────────────────────────────────────────
+    if (url.pathname.startsWith('/widget/')) {
+      const relativePath = url.pathname.slice('/widget/'.length);
+      const filePath = resolve(widgetDir, relativePath);
+      if (!existsSync(filePath)) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      let realPath, realWidgetDirPath;
+      try {
+        realPath = realpathSync(filePath);
+        realWidgetDirPath = realpathSync(widgetDir);
+      } catch {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      if (!realPath.startsWith(realWidgetDirPath)) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      const ext = filePath.split('.').pop();
+      const MIME_TYPES = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' };
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      const content = readFileSync(realPath);
+      res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'Cache-Control': 'public, max-age=3600' });
+      res.end(content);
+      return;
+    }
+
+    // ── 404 fallback ───────────────────────────────────────────────────────
+    sendJson(res, 404, { error: 'not found' });
+  };
+}
+
+// ── Direct-run internals (TUI bridge mode) ──────────────────────────────────
+
 const LOCK_FILE = resolve(PROJECT_ROOT, '.forge-service.lock');
 const NEXT_TIMEOUT_MS = 30_000;
 const WATCHDOG_INTERVAL_MS = 30_000;
@@ -53,9 +198,6 @@ const queue = [];
 let working = false;
 const waiters = []; // pending /next long-poll response objects
 
-// Sidecar mode: --mode=sidecar disables watchdog, binds 0.0.0.0
-const sidecarMode = process.argv.includes('--mode=sidecar');
-
 // MCP runtime state — initialized in main() after config and lock are ready
 let forgeMcpKey = null;  // null = unset = fail-closed
 let mcpDb = null;
@@ -63,6 +205,9 @@ let mcpConfig = null;
 
 // Sidecar context — initialized when sidecar mode is active
 let sidecarCtx = null;
+
+// Sidecar mode: --mode=sidecar disables watchdog, binds 0.0.0.0
+const sidecarMode = process.argv.includes('--mode=sidecar');
 
 /**
  * Parse a .env file into a key=value object.
@@ -166,157 +311,161 @@ function drainWaiters() {
   }
 }
 
-const server = createHttpServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
+let server;
+let watchdog;
 
-  // ── /mcp route — MCP protocol via StreamableHTTP ────────────────────────
-  if (url.pathname.startsWith('/mcp')) {
-    const authHeader = req.headers['authorization'] || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    // Fail-closed: unset key, empty key, missing token, or wrong token → 401
-    const tokenBuf = Buffer.from(token || '');
-    const keyBuf = Buffer.from(forgeMcpKey || '');
-    if (!forgeMcpKey || !token || tokenBuf.length !== keyBuf.length || !timingSafeEqual(tokenBuf, keyBuf)) {
-      json(res, 401, { error: 'Unauthorized' });
+function createDirectServer() {
+  server = createHttpServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+
+    // ── /mcp route — MCP protocol via StreamableHTTP ────────────────────────
+    if (url.pathname.startsWith('/mcp')) {
+      const authHeader = req.headers['authorization'] || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      // Fail-closed: unset key, empty key, missing token, or wrong token → 401
+      const tokenBuf = Buffer.from(token || '');
+      const keyBuf = Buffer.from(forgeMcpKey || '');
+      if (!forgeMcpKey || !token || tokenBuf.length !== keyBuf.length || !timingSafeEqual(tokenBuf, keyBuf)) {
+        json(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      if (!mcpDb) {
+        json(res, 503, { error: 'MCP server not initialized' });
+        return;
+      }
+      const mcpServer = createMcpServer(mcpDb, mcpConfig);
+      try {
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        await mcpServer.connect(transport);
+        const parsedBody = await readBody(req);
+        res.on('close', () => {
+          transport.close();
+          mcpServer.close();
+        });
+        await transport.handleRequest(req, res, parsedBody);
+      } catch (err) {
+        process.stderr.write(`[forge-service] MCP handler error: ${err.message}\n`);
+        if (!res.headersSent) json(res, 500, { error: 'Internal error' });
+      }
       return;
     }
-    if (!mcpDb) {
-      json(res, 503, { error: 'MCP server not initialized' });
-      return;
-    }
-    const mcpServer = createMcpServer(mcpDb, mcpConfig);
-    try {
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      await mcpServer.connect(transport);
-      const parsedBody = await readBody(req);
-      res.on('close', () => {
-        transport.close();
-        mcpServer.close();
+
+    if (req.method === 'GET' && url.pathname === '/health') {
+      json(res, 200, {
+        status: 'ok',
+        queueLength: queue.length,
+        working,
+        waiting: waiters.length,
+        uptime: Math.floor((Date.now() - startedAt) / 1000)
       });
-      await transport.handleRequest(req, res, parsedBody);
-    } catch (err) {
-      process.stderr.write(`[forge-service] MCP handler error: ${err.message}\n`);
-      if (!res.headersSent) json(res, 500, { error: 'Internal error' });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/health') {
-    json(res, 200, {
-      status: 'ok',
-      queueLength: queue.length,
-      working,
-      waiting: waiters.length,   // # of active /next long-pollers (Claude sessions watching)
-      uptime: Math.floor((Date.now() - startedAt) / 1000)
-    });
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/enqueue') {
-    const body = await readBody(req);
-    if (!body.endpoint) {
-      json(res, 400, { error: 'endpoint required' });
-      return;
-    }
-    queue.push(body.endpoint);
-    lastActivity = Date.now();
-    json(res, 200, { queued: true, position: queue.length });
-    drainWaiters();
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/next') {
-    lastActivity = Date.now();
-
-    if (queue.length > 0 && !working) {
-      working = true;
-      json(res, 200, queue[0]);
       return;
     }
 
-    // Long-poll: wait up to NEXT_TIMEOUT_MS
-    const timer = setTimeout(() => {
-      const idx = waiters.findIndex((w) => w.res === res);
-      if (idx !== -1) waiters.splice(idx, 1);
-      res.writeHead(204);
-      res.end();
-    }, NEXT_TIMEOUT_MS);
-
-    waiters.push({ res, timer });
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/complete') {
-    if (queue.length > 0) queue.shift();
-    working = false;
-    lastActivity = Date.now();
-    json(res, 200, { ok: true, remaining: queue.length });
-    drainWaiters();
-    return;
-  }
-
-  if (req.method === 'DELETE' && url.pathname === '/shutdown') {
-    json(res, 200, { ok: true });
-    shutdown();
-    return;
-  }
-
-  // ── Sidecar routes (only when context is initialized) ───────────────────
-  if (sidecarCtx) {
-    // Normalise /agent-api/v1/* → /agent-api/* so G-AF's versioned paths hit
-    // the same handlers without a proxy rewrite rule.
-    const sidecarPath = url.pathname.startsWith('/agent-api/v1/')
-      ? '/agent-api/' + url.pathname.slice('/agent-api/v1/'.length)
-      : url.pathname;
-
-    if (sidecarPath === '/agent-api/chat' && req.method === 'POST') {
-      return handleChat(req, res, sidecarCtx);
-    }
-    if (sidecarPath === '/agent-api/chat-sync' && req.method === 'POST') {
-      return handleChatSync(req, res, sidecarCtx);
-    }
-    if (sidecarPath === '/agent-api/chat/resume' && req.method === 'POST') {
-      return handleChatResume(req, res, sidecarCtx);
-    }
-    if (sidecarPath === '/agent-api/user/preferences') {
-      if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
-      if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
-    }
-    if (url.pathname.startsWith('/forge-admin/agents')) {
-      return handleAgents(req, res, sidecarCtx);
-    }
-    if (url.pathname.startsWith('/forge-admin/config')) {
-      return handleAdminConfig(req, res, sidecarCtx);
-    }
-  }
-
-  // ── Widget static file serving ───────────────────────────────────────────
-  if (url.pathname.startsWith('/widget/')) {
-    const relativePath = url.pathname.slice('/widget/'.length);
-    const widgetDir = resolve(PROJECT_ROOT, 'widget');
-    const filePath = resolve(widgetDir, relativePath);
-    // Path traversal prevention (resolve symlinks)
-    if (!existsSync(filePath)) {
-      json(res, 404, { error: 'not found' });
+    if (req.method === 'POST' && url.pathname === '/enqueue') {
+      const body = await readBody(req);
+      if (!body.endpoint) {
+        json(res, 400, { error: 'endpoint required' });
+        return;
+      }
+      queue.push(body.endpoint);
+      lastActivity = Date.now();
+      json(res, 200, { queued: true, position: queue.length });
+      drainWaiters();
       return;
     }
-    const realPath = realpathSync(filePath);
-    const realWidgetDir = realpathSync(widgetDir);
-    if (!realPath.startsWith(realWidgetDir)) {
-      json(res, 404, { error: 'not found' });
+
+    if (req.method === 'GET' && url.pathname === '/next') {
+      lastActivity = Date.now();
+
+      if (queue.length > 0 && !working) {
+        working = true;
+        json(res, 200, queue[0]);
+        return;
+      }
+
+      // Long-poll: wait up to NEXT_TIMEOUT_MS
+      const timer = setTimeout(() => {
+        const idx = waiters.findIndex((w) => w.res === res);
+        if (idx !== -1) waiters.splice(idx, 1);
+        res.writeHead(204);
+        res.end();
+      }, NEXT_TIMEOUT_MS);
+
+      waiters.push({ res, timer });
       return;
     }
-    const ext = filePath.split('.').pop();
-    const MIME_TYPES = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' };
-    const mime = MIME_TYPES[ext] || 'application/octet-stream';
-    const content = readFileSync(realPath);
-    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'Cache-Control': 'public, max-age=3600' });
-    res.end(content);
-    return;
-  }
 
-  json(res, 404, { error: 'not found' });
-});
+    if (req.method === 'POST' && url.pathname === '/complete') {
+      if (queue.length > 0) queue.shift();
+      working = false;
+      lastActivity = Date.now();
+      json(res, 200, { ok: true, remaining: queue.length });
+      drainWaiters();
+      return;
+    }
+
+    if (req.method === 'DELETE' && url.pathname === '/shutdown') {
+      json(res, 200, { ok: true });
+      shutdown();
+      return;
+    }
+
+    // ── Sidecar routes (only when context is initialized) ───────────────────
+    if (sidecarCtx) {
+      const sidecarPath = url.pathname.startsWith('/agent-api/v1/')
+        ? '/agent-api/' + url.pathname.slice('/agent-api/v1/'.length)
+        : url.pathname;
+
+      if (sidecarPath === '/agent-api/chat' && req.method === 'POST') {
+        return handleChat(req, res, sidecarCtx);
+      }
+      if (sidecarPath === '/agent-api/chat-sync' && req.method === 'POST') {
+        return handleChatSync(req, res, sidecarCtx);
+      }
+      if (sidecarPath === '/agent-api/chat/resume' && req.method === 'POST') {
+        return handleChatResume(req, res, sidecarCtx);
+      }
+      if (sidecarPath === '/agent-api/user/preferences') {
+        if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
+        if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
+      }
+      if (url.pathname.startsWith('/forge-admin/agents')) {
+        return handleAgents(req, res, sidecarCtx);
+      }
+      if (url.pathname.startsWith('/forge-admin/config')) {
+        return handleAdminConfig(req, res, sidecarCtx);
+      }
+    }
+
+    // ── Widget static file serving ───────────────────────────────────────────
+    if (url.pathname.startsWith('/widget/')) {
+      const relativePath = url.pathname.slice('/widget/'.length);
+      const widgetDir = resolve(PROJECT_ROOT, 'widget');
+      const filePath = resolve(widgetDir, relativePath);
+      if (!existsSync(filePath)) {
+        json(res, 404, { error: 'not found' });
+        return;
+      }
+      const realPath = realpathSync(filePath);
+      const realWidgetDir = realpathSync(widgetDir);
+      if (!realPath.startsWith(realWidgetDir)) {
+        json(res, 404, { error: 'not found' });
+        return;
+      }
+      const ext = filePath.split('.').pop();
+      const MIME_TYPES = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' };
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      const content = readFileSync(realPath);
+      res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'Cache-Control': 'public, max-age=3600' });
+      res.end(content);
+      return;
+    }
+
+    json(res, 404, { error: 'not found' });
+  });
+
+  return server;
+}
 
 function shutdown() {
   // Drain waiters with 204
@@ -330,19 +479,21 @@ function shutdown() {
   setTimeout(() => process.exit(0), 2000);
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-// Watchdog: self-terminate after inactivity
-const watchdog = setInterval(() => {
-  if (Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
-    process.stderr.write('[forge-service] No activity for 90s — self-terminating\n');
-    shutdown();
-  }
-}, WATCHDOG_INTERVAL_MS);
-watchdog.unref();
-
 async function main() {
+  createDirectServer();
+
+  // Watchdog: self-terminate after inactivity
+  watchdog = setInterval(() => {
+    if (Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
+      process.stderr.write('[forge-service] No activity for 90s — self-terminating\n');
+      shutdown();
+    }
+  }, WATCHDOG_INTERVAL_MS);
+  watchdog.unref();
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+
   const rawConfig = loadConfig();
   const config = mergeDefaults(rawConfig);
   const port = sidecarMode
@@ -354,7 +505,7 @@ async function main() {
     process.stderr.write(`forge-service listen error: ${err.message}\n`);
     process.exit(1);
   });
-  server.listen(port, bindHost, () => {
+  server.listen(port, bindHost, async () => {
     writeLock(port);
     process.stdout.write(`forge-service started on ${bindHost}:${port}${sidecarMode ? ' (sidecar mode)' : ''}\n`);
 
@@ -374,25 +525,19 @@ async function main() {
       mcpConfig = config;
       process.stdout.write('[forge-service] MCP server initialized\n');
 
-      // Initialize sidecar context (available for sidecar routes even outside --mode=sidecar)
-      const auth = createAuth(config.auth);
-      const promptStore = makePromptStore(config, mcpDb);
-      const preferenceStore = makePreferenceStore(config, mcpDb);
-      const conversationStore = makeConversationStore(config, mcpDb);
-      const hitlEngine = makeHitlEngine(config, mcpDb);
-      const verifierRunner = new VerifierRunner(mcpDb, config);
-      const agentRegistry = makeAgentRegistry(config, mcpDb);
+      // Build sidecar context using the exported function
+      sidecarCtx = await buildSidecarContext(config, mcpDb, env);
+
       // Seed agents from config.agents[] if defined
       try {
-        agentRegistry.seedFromConfig();
-        const allAgents = agentRegistry.getAllAgents();
+        sidecarCtx.agentRegistry.seedFromConfig();
+        const allAgents = sidecarCtx.agentRegistry.getAllAgents();
         if (allAgents.length > 0) {
           process.stdout.write(`[forge-service] Agent registry seeded: ${allAgents.length} agent(s)\n`);
         }
       } catch (err) {
         process.stderr.write(`[forge-service] Agent seeding failed: ${err.message}\n`);
       }
-      sidecarCtx = { auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, agentRegistry, db: mcpDb, config, env };
       process.stdout.write('[forge-service] Sidecar context initialized\n');
     } catch (err) {
       process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);
@@ -419,7 +564,12 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  process.stderr.write(`forge-service failed: ${err.message}\n`);
-  process.exit(1);
-});
+// Guard: only auto-execute when run directly (not when imported as a library)
+const isDirectRun = process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+if (isDirectRun) {
+  main().catch((err) => {
+    process.stderr.write(`forge-service failed: ${err.message}\n`);
+    process.exit(1);
+  });
+}

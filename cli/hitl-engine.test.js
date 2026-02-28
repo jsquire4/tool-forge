@@ -169,11 +169,112 @@ describe('HitlEngine', () => {
     });
   });
 
+  describe('pause + resume (Postgres)', () => {
+    /** Minimal Postgres pool mock — in-memory Map */
+    function createPgMock() {
+      const rows = new Map();
+      let tableCreated = false;
+      return {
+        _rows: rows,
+        async query(sql, params) {
+          if (sql.includes('CREATE TABLE')) {
+            tableCreated = true;
+            return { rows: [] };
+          }
+          if (sql.includes('INSERT INTO')) {
+            rows.set(params[0], {
+              resume_token: params[0],
+              state_json: params[1],
+              expires_at: params[2],
+              created_at: params[3],
+            });
+            return { rows: [] };
+          }
+          if (sql.includes('SELECT') && sql.includes('resume_token')) {
+            const token = params[0];
+            const row = rows.get(token);
+            return { rows: row ? [row] : [] };
+          }
+          if (sql.includes('DELETE')) {
+            rows.delete(params[0]);
+            return { rows: [] };
+          }
+          return { rows: [] };
+        }
+      };
+    }
+
+    it('round-trip works', async () => {
+      const pgPool = createPgMock();
+      const engine = new HitlEngine({ pgPool });
+      const token = await engine.pause({ session: 'pg-test', tools: ['search'] });
+      expect(typeof token).toBe('string');
+
+      const state = await engine.resume(token);
+      expect(state).toEqual({ session: 'pg-test', tools: ['search'] });
+    });
+
+    it('token is one-time use', async () => {
+      const pgPool = createPgMock();
+      const engine = new HitlEngine({ pgPool });
+      const token = await engine.pause({ data: 99 });
+      expect(await engine.resume(token)).toEqual({ data: 99 });
+      expect(await engine.resume(token)).toBeNull();
+    });
+
+    it('resume returns null for wrong token', async () => {
+      const pgPool = createPgMock();
+      const engine = new HitlEngine({ pgPool });
+      await engine.pause({ data: 1 });
+      expect(await engine.resume('wrong-token')).toBeNull();
+    });
+
+    it('resume returns null after TTL expiry', async () => {
+      const pgPool = createPgMock();
+      const engine = new HitlEngine({ pgPool, ttlMs: 1 });
+      const token = await engine.pause({ data: 1 });
+      const start = Date.now();
+      while (Date.now() - start < 5) { /* busy wait */ }
+      expect(await engine.resume(token)).toBeNull();
+    });
+
+    it('postgres takes priority over sqlite when both provided', async () => {
+      const pgPool = createPgMock();
+      const db = makeTestDb();
+      const engine = new HitlEngine({ pgPool, db });
+      const token = await engine.pause({ via: 'postgres' });
+
+      // Should be in Postgres mock, not SQLite
+      expect(pgPool._rows.size).toBe(1);
+      const state = await engine.resume(token);
+      expect(state).toEqual({ via: 'postgres' });
+    });
+  });
+
   it('makeHitlEngine factory creates engine with db', async () => {
     const db = makeTestDb();
     const engine = makeHitlEngine({}, db);
     expect(engine).toBeInstanceOf(HitlEngine);
     const token = await engine.pause({ test: true });
+    expect(await engine.resume(token)).toEqual({ test: true });
+  });
+
+  it('makeHitlEngine factory uses pgPool when provided (no redis)', async () => {
+    const pgMock = {
+      _rows: new Map(),
+      async query(sql, params) {
+        if (sql.includes('CREATE TABLE')) return { rows: [] };
+        if (sql.includes('INSERT')) { this._rows.set(params[0], { resume_token: params[0], state_json: params[1], expires_at: params[2], created_at: params[3] }); return { rows: [] }; }
+        if (sql.includes('SELECT')) { const r = this._rows.get(params[0]); return { rows: r ? [r] : [] }; }
+        if (sql.includes('DELETE')) { this._rows.delete(params[0]); return { rows: [] }; }
+        return { rows: [] };
+      }
+    };
+    const db = makeTestDb();
+    const engine = makeHitlEngine({}, db, null, pgMock);
+    expect(engine).toBeInstanceOf(HitlEngine);
+    const token = await engine.pause({ test: true });
+    expect(pgMock._rows.size).toBe(1);
     expect(await engine.resume(token)).toEqual({ test: true });
   });
 

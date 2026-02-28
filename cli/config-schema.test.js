@@ -10,6 +10,8 @@ describe('config-schema', () => {
       expect(config.defaultHitlLevel).toBe('cautious');
       expect(config.conversation.window).toBe(25);
       expect(config.sidecar.port).toBe(8001);
+      expect(config.database.type).toBe('sqlite');
+      expect(config.database.url).toBeNull();
     });
 
     it('overrides scalar values', () => {
@@ -67,6 +69,17 @@ describe('config-schema', () => {
       const { valid, errors } = validateConfig({ defaultHitlLevel: 'yolo' });
       expect(valid).toBe(false);
       expect(errors[0]).toContain('defaultHitlLevel');
+    });
+
+    it('accepts valid database.type values', () => {
+      expect(validateConfig({ database: { type: 'sqlite' } }).valid).toBe(true);
+      expect(validateConfig({ database: { type: 'postgres' } }).valid).toBe(true);
+    });
+
+    it('rejects invalid database.type', () => {
+      const { valid, errors } = validateConfig({ database: { type: 'mongodb' } });
+      expect(valid).toBe(false);
+      expect(errors[0]).toContain('database.type');
     });
 
     it('rejects invalid conversation.store', () => {

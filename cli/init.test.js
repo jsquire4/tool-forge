@@ -273,9 +273,10 @@ describe('init — E2E flows', () => {
       '1',           // mode: sidecar
       'sk-ant-pg123',
       '1',           // model
-      '2',           // db: postgres
+      '2',           // storage: postgres
       'postgresql://u:p@localhost:5432/forge', // db url
       'y',           // store in .env
+      'n',           // dep check: decline pg install (not installed)
       '1',           // auth: trust
       '',            // discovery: skip
       'n',           // no agent
@@ -287,9 +288,36 @@ describe('init — E2E flows', () => {
     const config = JSON.parse(readFileSync(join(tmpDir, 'forge.config.json'), 'utf-8'));
     expect(config.database.type).toBe('postgres');
     expect(config.database.url).toBe('${DATABASE_URL}');
+    expect(config.conversation.store).toBe('postgres');
 
     const envContent = readFileSync(join(tmpDir, '.env'), 'utf-8');
     expect(envContent).toContain('DATABASE_URL=postgresql://u:p@localhost:5432/forge');
+  });
+
+  it('E2E: sidecar + redis — REDIS_URL in env, conversation.store in config', async () => {
+    const rl = mockRl([
+      '1',           // mode: sidecar
+      'sk-ant-redis1',
+      '1',           // model
+      '3',           // storage: redis
+      'redis://myredis:6379', // redis url
+      'y',           // store in .env
+      'n',           // dep check: decline redis install
+      '1',           // auth: trust
+      '',            // discovery: skip
+      'n',           // no agent
+      'n',           // no widget
+    ]);
+
+    await runInit({ projectRoot: tmpDir, rl });
+
+    const config = JSON.parse(readFileSync(join(tmpDir, 'forge.config.json'), 'utf-8'));
+    expect(config.conversation.store).toBe('redis');
+    expect(config.conversation.redis.url).toBe('${REDIS_URL}');
+    expect(config.database.type).toBe('sqlite'); // Redis only for conversations
+
+    const envContent = readFileSync(join(tmpDir, '.env'), 'utf-8');
+    expect(envContent).toContain('REDIS_URL=redis://myredis:6379');
   });
 
   it('E2E: TUI-only — only config + env, no widget', async () => {

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import * as crypto from 'crypto';
 import { mergeDefaults, validateConfig } from './config-schema.js';
+import { ensureDependencyInteractive } from './dep-check.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -295,20 +296,32 @@ export async function runInit(opts = {}) {
     const modelOptions = MODEL_LISTS[provider] || MODEL_LISTS.anthropic;
     const model = await choose(rl, 'Choose your default model:', modelOptions, 0);
 
-    // ── Step 4: Database (sidecar modes) ──────────────────────────────────
+    // ── Step 4: Storage (sidecar modes) ────────────────────────────────────
     let dbType = 'sqlite';
     let dbUrl = null;
     let storeDbUrlInEnv = false;
+    let conversationStore = 'sqlite';
+    let redisUrl = null;
+    let storeRedisUrlInEnv = false;
 
     if (hasSidecar) {
-      dbType = await choose(rl, 'Database backend?', [
+      const storageChoice = await choose(rl, 'Where should chat history be stored?', [
         { label: 'SQLite (local file, zero setup — default)', value: 'sqlite' },
-        { label: 'Postgres (shared DB for dev+prod, remote TUI access)', value: 'postgres' },
+        { label: 'Postgres (shared DB for dev+prod, remote access)', value: 'postgres' },
+        { label: 'Redis (in-memory, fast, auto-expiry)', value: 'redis' },
       ], 0);
 
-      if (dbType === 'postgres') {
+      if (storageChoice === 'postgres') {
+        dbType = 'postgres';
+        conversationStore = 'postgres';
         dbUrl = await ask(rl, 'Postgres connection URL (e.g. postgresql://user:pass@host:5432/forge)');
         storeDbUrlInEnv = await confirm(rl, 'Store connection URL in .env as DATABASE_URL?', true);
+        await ensureDependencyInteractive('pg', rl);
+      } else if (storageChoice === 'redis') {
+        conversationStore = 'redis';
+        redisUrl = await ask(rl, 'Redis URL', 'redis://localhost:6379');
+        storeRedisUrlInEnv = await confirm(rl, 'Store Redis URL in .env as REDIS_URL?', true);
+        await ensureDependencyInteractive('redis', rl);
       }
     }
 
@@ -398,6 +411,10 @@ export async function runInit(opts = {}) {
       if (dbType === 'postgres') {
         raw.database.url = storeDbUrlInEnv ? '${DATABASE_URL}' : dbUrl;
       }
+      raw.conversation = { store: conversationStore };
+      if (conversationStore === 'redis') {
+        raw.conversation.redis = { url: storeRedisUrlInEnv ? '${REDIS_URL}' : redisUrl };
+      }
       if (discoveryUrl) {
         raw.api = { discovery: discoveryUrl };
       }
@@ -449,6 +466,9 @@ export async function runInit(opts = {}) {
     }
     if (storeDbUrlInEnv && dbUrl) {
       envEntries.DATABASE_URL = dbUrl;
+    }
+    if (storeRedisUrlInEnv && redisUrl) {
+      envEntries.REDIS_URL = redisUrl;
     }
 
     if (Object.keys(envEntries).length > 0) {

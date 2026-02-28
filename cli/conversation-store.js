@@ -194,6 +194,78 @@ export class RedisConversationStore {
   }
 }
 
+// ── Postgres adapter ──────────────────────────────────────────────────────
+
+export class PostgresConversationStore {
+  /**
+   * @param {import('pg').Pool} pgPool — shared Pool instance (not owned by this store)
+   */
+  constructor(pgPool) {
+    this._pool = pgPool;
+    this._tableReady = false;
+  }
+
+  async _ensureTable() {
+    if (this._tableReady) return;
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS conversations (
+        id SERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        stage TEXT,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        agent_id TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    this._tableReady = true;
+  }
+
+  createSession() {
+    return randomUUID();
+  }
+
+  async persistMessage(sessionId, stage, role, content, agentId = null) {
+    await this._ensureTable();
+    await this._pool.query(
+      `INSERT INTO conversations (session_id, stage, role, content, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [sessionId, stage, role, content, agentId ?? null, new Date().toISOString()]
+    );
+  }
+
+  async getHistory(sessionId) {
+    await this._ensureTable();
+    const { rows } = await this._pool.query(
+      'SELECT * FROM conversations WHERE session_id = $1 ORDER BY created_at ASC',
+      [sessionId]
+    );
+    return rows;
+  }
+
+  async getIncompleteSessions() {
+    await this._ensureTable();
+    const { rows } = await this._pool.query(`
+      SELECT
+        c.session_id,
+        c.stage,
+        MAX(c.created_at) AS last_updated
+      FROM conversations c
+      WHERE c.session_id NOT IN (
+        SELECT DISTINCT session_id FROM conversations
+        WHERE role = 'system' AND content = '[COMPLETE]'
+      )
+      GROUP BY c.session_id, c.stage
+      ORDER BY last_updated DESC
+    `);
+    return rows;
+  }
+
+  async close() {
+    // Pool is shared — not owned by this store, so don't close it here
+  }
+}
+
 // ── Factory ────────────────────────────────────────────────────────────────
 
 /**
@@ -201,14 +273,22 @@ export class RedisConversationStore {
  *
  * @param {object} config  — forge.config.json contents
  * @param {import('better-sqlite3').Database|null} db  — required for SQLite store
- * @returns {SqliteConversationStore|RedisConversationStore}
+ * @param {import('pg').Pool|null} pgPool — required for Postgres store
+ * @returns {SqliteConversationStore|RedisConversationStore|PostgresConversationStore}
  */
-export function makeConversationStore(config, db = null) {
+export function makeConversationStore(config, db = null, pgPool = null) {
   const storeType = config?.conversation?.store ?? 'sqlite';
 
   if (storeType === 'redis') {
     const redisConfig = config?.conversation?.redis ?? {};
     return new RedisConversationStore(redisConfig);
+  }
+
+  if (storeType === 'postgres') {
+    if (!pgPool) {
+      throw new Error('makeConversationStore: Postgres store requires a pgPool instance');
+    }
+    return new PostgresConversationStore(pgPool);
   }
 
   if (!db) {

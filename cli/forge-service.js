@@ -261,16 +261,22 @@ const server = createHttpServer(async (req, res) => {
 
   // ── Sidecar routes (only when context is initialized) ───────────────────
   if (sidecarCtx) {
-    if (url.pathname === '/agent-api/chat' && req.method === 'POST') {
+    // Normalise /agent-api/v1/* → /agent-api/* so G-AF's versioned paths hit
+    // the same handlers without a proxy rewrite rule.
+    const sidecarPath = url.pathname.startsWith('/agent-api/v1/')
+      ? '/agent-api/' + url.pathname.slice('/agent-api/v1/'.length)
+      : url.pathname;
+
+    if (sidecarPath === '/agent-api/chat' && req.method === 'POST') {
       return handleChat(req, res, sidecarCtx);
     }
-    if (url.pathname === '/agent-api/chat-sync' && req.method === 'POST') {
+    if (sidecarPath === '/agent-api/chat-sync' && req.method === 'POST') {
       return handleChatSync(req, res, sidecarCtx);
     }
-    if (url.pathname === '/agent-api/chat/resume' && req.method === 'POST') {
+    if (sidecarPath === '/agent-api/chat/resume' && req.method === 'POST') {
       return handleChatResume(req, res, sidecarCtx);
     }
-    if (url.pathname === '/agent-api/user/preferences') {
+    if (sidecarPath === '/agent-api/user/preferences') {
       if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
       if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
     }

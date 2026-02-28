@@ -39,7 +39,8 @@ const waiters = []; // pending /next long-poll response objects
 
 // MCP runtime state — initialized in main() after config and lock are ready
 let forgeMcpKey = null;  // null = unset = fail-closed
-let mcpServer = null;
+let mcpDb = null;
+let mcpConfig = null;
 
 /**
  * Parse a .env file into a key=value object.
@@ -143,14 +144,19 @@ const server = createHttpServer(async (req, res) => {
       json(res, 401, { error: 'Unauthorized' });
       return;
     }
-    if (!mcpServer) {
+    if (!mcpDb) {
       json(res, 503, { error: 'MCP server not initialized' });
       return;
     }
+    const mcpServer = createMcpServer(mcpDb, mcpConfig);
     try {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await mcpServer.connect(transport);
       const parsedBody = await readBody(req);
+      res.on('close', () => {
+        transport.close();
+        mcpServer.close();
+      });
       await transport.handleRequest(req, res, parsedBody);
     } catch (err) {
       process.stderr.write(`[forge-service] MCP handler error: ${err.message}\n`);
@@ -265,15 +271,16 @@ async function main() {
     const rawKey = env.FORGE_MCP_KEY ?? process.env.FORGE_MCP_KEY ?? '';
     forgeMcpKey = rawKey.trim() || null;
 
-    // Initialize DB and MCP server; if either fails, log and continue without MCP
+    // Initialize DB; if it fails, log and continue without MCP
     try {
       const dbPath = resolve(PROJECT_ROOT, config.dbPath || 'forge.db');
-      const db = getDb(dbPath);
-      mcpServer = createMcpServer(db, config);
+      mcpDb = getDb(dbPath);
+      mcpConfig = config;
       process.stdout.write('[forge-service] MCP server initialized\n');
     } catch (err) {
       process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);
-      mcpServer = null;
+      mcpDb = null;
+      mcpConfig = null;
     }
   });
 }

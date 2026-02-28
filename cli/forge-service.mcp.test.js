@@ -134,6 +134,35 @@ describe('forge-service /mcp auth (Group 4)', () => {
     const body = await res.json();
     expect(body.queued).toBe(true);
   });
+
+  it('correct token → not 401 (MCP handler reached)', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${TEST_KEY}`
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 })
+    });
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(503);
+  });
+
+  it('second /mcp request with correct token succeeds (per-request server)', async () => {
+    const opts = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${TEST_KEY}`
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 2 })
+    };
+    const res1 = await fetch(`http://127.0.0.1:${port}/mcp`, opts);
+    const res2 = await fetch(`http://127.0.0.1:${port}/mcp`, { ...opts, body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 3 }) });
+    expect(res1.status).not.toBe(401);
+    expect(res2.status).not.toBe(401);
+    expect(res2.status).not.toBe(500);
+  });
 });
 
 // ── Group 4 continued: key not set → fail-closed ───────────────────────────
@@ -143,9 +172,6 @@ describe('forge-service /mcp auth — FORGE_MCP_KEY not set', () => {
   let port;
 
   beforeAll(async () => {
-    // Spawn without FORGE_MCP_KEY in env (strip it from parent env too)
-    const env = { ...process.env };
-    delete env.FORGE_MCP_KEY;
     ({ proc, port } = await startService({ FORGE_MCP_KEY: '' }));
   }, 10000);
 

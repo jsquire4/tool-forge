@@ -23,6 +23,7 @@ import { inferOutputGroups, getVerifiersForGroups } from '../output-groups.js';
 const MENU_ITEMS = [
   { key: 'tools-evals',        label: 'Tools & Evals',       icon: '⚙' },
   { key: 'forge',              label: 'Forge Tool',          icon: '⚒' },
+  { key: 'forge-agent',        label: 'Forge Agent',         icon: '◈' },
   { key: 'endpoints',          label: 'Endpoints',           icon: '⇄' },
   { key: 'verifier-coverage',  label: 'Verifier Coverage',   icon: '✔' },
   { key: 'performance',        label: 'Performance',         icon: '▲' },
@@ -123,14 +124,17 @@ function buildItems(stats) {
   const row = (num, icon, label, stat) =>
     ` {bold}${num}{/bold}  ${icon}  {white-fg}${label.padEnd(22)}{/white-fg}${stat}`;
 
+  const agentStat = colorStat('stage-aware chat', 'dim');
+
   return [
     row('1', MENU_ITEMS[0].icon, MENU_ITEMS[0].label, toolsStat),
     row('2', MENU_ITEMS[1].icon, MENU_ITEMS[1].label, forgeStat),
-    row('3', MENU_ITEMS[2].icon, MENU_ITEMS[2].label, epStat),
-    row('4', MENU_ITEMS[3].icon, MENU_ITEMS[3].label, verifStat),
-    row('5', MENU_ITEMS[4].icon, MENU_ITEMS[4].label, perfStat),
-    row('6', MENU_ITEMS[5].icon, MENU_ITEMS[5].label, chatStat),
-    row('7', MENU_ITEMS[6].icon, MENU_ITEMS[6].label, modelStat)
+    row('3', MENU_ITEMS[2].icon, MENU_ITEMS[2].label, agentStat),
+    row('4', MENU_ITEMS[3].icon, MENU_ITEMS[3].label, epStat),
+    row('5', MENU_ITEMS[4].icon, MENU_ITEMS[4].label, verifStat),
+    row('6', MENU_ITEMS[5].icon, MENU_ITEMS[5].label, perfStat),
+    row('7', MENU_ITEMS[6].icon, MENU_ITEMS[6].label, chatStat),
+    row('8', MENU_ITEMS[7].icon, MENU_ITEMS[7].label, modelStat)
   ];
 }
 
@@ -195,7 +199,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (target) navigate(target.key);
   });
 
-  list.key(['1', '2', '3', '4', '5', '6', '7'], (ch) => {
+  list.key(['1', '2', '3', '4', '5', '6', '7', '8'], (ch) => {
     const idx = parseInt(ch, 10) - 1;
     if (MENU_ITEMS[idx]) navigate(MENU_ITEMS[idx].key);
   });
@@ -207,7 +211,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
       setFooter(
         ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +
-        '  {cyan-fg}1-7{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
+        '  {cyan-fg}1-8{/cyan-fg} jump  {cyan-fg}r{/cyan-fg} refresh  {cyan-fg}q{/cyan-fg} quit'
       );
     } catch (_) {
       list.setItems(MENU_ITEMS.map((m, i) => ` ${i + 1}  ${m.icon}  ${m.label}`));

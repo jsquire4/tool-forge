@@ -10,7 +10,8 @@
  * Block short-circuits (stops pipeline immediately).
  */
 
-import { insertVerifierResult, getVerifiersForTool as dbGetVerifiersForTool } from './db.js';
+import { insertVerifierResult } from './db.js';
+import { resolve, isAbsolute } from 'path';
 
 const OUTCOME_SEVERITY = { pass: 0, warn: 1, block: 2 };
 
@@ -67,8 +68,9 @@ export class VerifierRunner {
       let spec;
       try {
         spec = JSON.parse(verifier.spec_json);
-      } catch {
-        continue; // skip malformed
+      } catch (err) {
+        process.stderr.write(`[verifier-runner] Skipping verifier "${verifier.verifier_name}": malformed spec_json: ${err.message}\n`);
+        continue;
       }
 
       const entry = {
@@ -78,10 +80,19 @@ export class VerifierRunner {
         spec
       };
 
-      // For custom verifiers, resolve the function
+      // For custom verifiers, resolve the function (sandboxed to verifiersDir)
       if (verifier.type === 'custom' && spec.filePath) {
         try {
-          const mod = await import(spec.filePath);
+          const verifiersDir = this._config?.verification?.verifiersDir;
+          const resolvedPath = isAbsolute(spec.filePath) ? spec.filePath : resolve(spec.filePath);
+          if (!verifiersDir || !resolvedPath.startsWith(resolve(verifiersDir))) {
+            entry.spec = { fn: () => ({ outcome: 'warn', message: `Custom verifier "${verifier.verifier_name}": path outside verifiersDir` }) };
+            const toolName = binding.tool_name;
+            if (!toolMap.has(toolName)) toolMap.set(toolName, []);
+            toolMap.get(toolName).push(entry);
+            continue;
+          }
+          const mod = await import(resolvedPath);
           const fn = mod[spec.exportName || 'verify'] || mod.default;
           if (typeof fn === 'function') {
             entry.spec = { ...spec, fn };
@@ -164,6 +175,9 @@ export class VerifierRunner {
         return { ...vResult, verifierName: v.name };
       }
 
+      if (!(vResult.outcome in OUTCOME_SEVERITY)) {
+        vResult = { outcome: 'warn', message: `Verifier "${v.name}" returned invalid outcome: "${vResult.outcome}"` };
+      }
       if (OUTCOME_SEVERITY[vResult.outcome] > OUTCOME_SEVERITY[worst.outcome]) {
         worst = { ...vResult, verifierName: v.name };
       }
@@ -240,14 +254,20 @@ function runPatternVerifier(spec, body) {
   const outcome = spec.outcome ?? 'warn';
 
   if (spec.reject) {
-    const regex = new RegExp(spec.reject);
+    let regex;
+    try { regex = new RegExp(spec.reject); } catch (err) {
+      return { outcome: 'warn', message: `Invalid reject regex "${spec.reject}": ${err.message}` };
+    }
     if (regex.test(text)) {
       return { outcome, message: `Result matches reject pattern: ${spec.reject}` };
     }
   }
 
   if (spec.match) {
-    const regex = new RegExp(spec.match);
+    let regex;
+    try { regex = new RegExp(spec.match); } catch (err) {
+      return { outcome: 'warn', message: `Invalid match regex "${spec.match}": ${err.message}` };
+    }
     if (!regex.test(text)) {
       return { outcome, message: `Result does not match required pattern: ${spec.match}` };
     }

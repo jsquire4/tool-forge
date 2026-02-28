@@ -117,7 +117,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     } catch (err) {
       table.setData([
         ['Tool', 'ACIRU Order', 'Verifiers', 'Status'],
-        [`Error: ${err.message}`, '', '', '']
+        [`Error: ${String(err.message).replace(/\{/g, '\\{')}`, '', '', '']
       ]);
       screen.render();
       return;

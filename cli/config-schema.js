@@ -31,9 +31,12 @@ export function mergeDefaults(raw = {}) {
   return deepMerge(CONFIG_DEFAULTS, raw);
 }
 
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function deepMerge(defaults, overrides) {
   const result = { ...defaults };
   for (const key of Object.keys(overrides)) {
+    if (UNSAFE_KEYS.has(key)) continue;
     const val = overrides[key];
     if (val !== null && typeof val === 'object' && !Array.isArray(val)
         && typeof defaults[key] === 'object' && defaults[key] !== null && !Array.isArray(defaults[key])) {

@@ -8,7 +8,7 @@
  * No external JWT library required.
  */
 
-import { createHmac, createVerify } from 'crypto';
+import { createHmac, createVerify, timingSafeEqual } from 'crypto';
 
 /**
  * @typedef {{ authenticated: boolean, userId: string|null, claims: object|null, error: string|null }} AuthResult
@@ -26,7 +26,7 @@ export function createAuth(authConfig = {}) {
 
   return {
     authenticate(req) {
-      const authHeader = req.headers?.authorization ?? req.headers?.Authorization;
+      const authHeader = req.headers?.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return { authenticated: false, userId: null, claims: null, error: 'Missing or invalid Authorization header' };
       }
@@ -62,7 +62,9 @@ export function createAuth(authConfig = {}) {
           const expected = base64UrlEncode(
             createHmac('sha256', signingKey).update(sigInput).digest()
           );
-          if (expected !== signature) {
+          const expectedBuf = Buffer.from(expected);
+          const signatureBuf = Buffer.from(signature);
+          if (expectedBuf.length !== signatureBuf.length || !timingSafeEqual(expectedBuf, signatureBuf)) {
             return { authenticated: false, userId: null, claims: null, error: 'Invalid signature' };
           }
         } else if (alg === 'RS256') {
@@ -105,12 +107,14 @@ export function authenticateAdmin(req, adminKey) {
   if (!adminKey) {
     return { authenticated: false, error: 'No admin key configured' };
   }
-  const authHeader = req.headers?.authorization ?? req.headers?.Authorization;
+  const authHeader = req.headers?.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return { authenticated: false, error: 'Missing or invalid Authorization header' };
   }
   const token = authHeader.slice(7);
-  if (token !== adminKey) {
+  const tokenBuf = Buffer.from(token);
+  const keyBuf = Buffer.from(adminKey);
+  if (tokenBuf.length !== keyBuf.length || !timingSafeEqual(tokenBuf, keyBuf)) {
     return { authenticated: false, error: 'Invalid admin key' };
   }
   return { authenticated: true, error: null };

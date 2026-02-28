@@ -16,8 +16,9 @@
 
 import { createServer } from 'net';
 import { createServer as createHttpServer } from 'http';
-import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, readFileSync, realpathSync } from 'fs';
 import { resolve, dirname } from 'path';
+import { timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
 import { createMcpServer } from './mcp-server.js';
@@ -122,13 +123,25 @@ function removeLock() {
   }
 }
 
+const MAX_BODY_SIZE = 1_048_576; // 1 MB
+
 function readBody(req) {
-  return new Promise((res) => {
+  return new Promise((res, rej) => {
     let data = '';
-    req.on('data', (chunk) => { data += chunk; });
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        rej(new Error('Request body too large'));
+        return;
+      }
+      data += chunk;
+    });
     req.on('end', () => {
       try { res(data ? JSON.parse(data) : {}); } catch (_) { res({}); }
     });
+    req.on('error', () => res({}));
   });
 }
 
@@ -158,7 +171,9 @@ const server = createHttpServer(async (req, res) => {
     const authHeader = req.headers['authorization'] || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     // Fail-closed: unset key, empty key, missing token, or wrong token → 401
-    if (!forgeMcpKey || !token || token !== forgeMcpKey) {
+    const tokenBuf = Buffer.from(token || '');
+    const keyBuf = Buffer.from(forgeMcpKey || '');
+    if (!forgeMcpKey || !token || tokenBuf.length !== keyBuf.length || !timingSafeEqual(tokenBuf, keyBuf)) {
       json(res, 401, { error: 'Unauthorized' });
       return;
     }
@@ -265,15 +280,23 @@ const server = createHttpServer(async (req, res) => {
     const relativePath = url.pathname.slice('/widget/'.length);
     const widgetDir = resolve(PROJECT_ROOT, 'widget');
     const filePath = resolve(widgetDir, relativePath);
-    // Path traversal prevention
-    if (!filePath.startsWith(widgetDir) || !existsSync(filePath)) {
+    // Path traversal prevention (resolve symlinks)
+    if (!existsSync(filePath)) {
+      json(res, 404, { error: 'not found' });
+      return;
+    }
+    const realPath = realpathSync(filePath);
+    const realWidgetDir = realpathSync(widgetDir);
+    if (!realPath.startsWith(realWidgetDir)) {
       json(res, 404, { error: 'not found' });
       return;
     }
     const ext = filePath.split('.').pop();
-    const mime = { html: 'text/html', js: 'application/javascript', css: 'text/css' }[ext] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600' });
-    res.end(readFileSync(filePath));
+    const MIME_TYPES = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' };
+    const mime = MIME_TYPES[ext] || 'application/octet-stream';
+    const content = readFileSync(realPath);
+    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'Cache-Control': 'public, max-age=3600' });
+    res.end(content);
     return;
   }
 

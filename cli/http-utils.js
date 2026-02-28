@@ -2,18 +2,33 @@
  * Shared HTTP helpers for sidecar request handlers.
  */
 
+import { getAllToolRegistry } from './db.js';
+
+const MAX_BODY_SIZE = 1_048_576; // 1 MB
+
 /**
  * Read and JSON-parse a request body. Returns {} on parse failure.
+ * Rejects bodies larger than MAX_BODY_SIZE.
  * @param {import('http').IncomingMessage} req
  * @returns {Promise<object>}
  */
 export function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk) => { data += chunk; });
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      data += chunk;
+    });
     req.on('end', () => {
       try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
     });
+    req.on('error', () => resolve({}));
   });
 }
 
@@ -27,4 +42,32 @@ export function sendJson(res, statusCode, body) {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
   res.end(payload);
+}
+
+/**
+ * Load promoted tools from the tool registry and convert to LLM-format tool defs.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {{ toolRows: object[], tools: object[] }}
+ */
+export function loadPromotedTools(db) {
+  const toolRows = getAllToolRegistry(db).filter(r => r.lifecycle_state === 'promoted');
+  const tools = [];
+  for (const row of toolRows) {
+    try {
+      const spec = JSON.parse(row.spec_json);
+      const schema = spec.schema || {};
+      const properties = {};
+      const required = [];
+      for (const [k, v] of Object.entries(schema)) {
+        properties[k] = { type: v.type || 'string', description: v.description || k };
+        if (!v.optional) required.push(k);
+      }
+      tools.push({
+        name: spec.name || row.tool_name,
+        description: spec.description || '',
+        jsonSchema: { type: 'object', properties, required }
+      });
+    } catch { /* skip malformed specs */ }
+  }
+  return { toolRows, tools };
 }

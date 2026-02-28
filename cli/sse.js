@@ -19,7 +19,9 @@ export function initSSE(res) {
 
   return {
     send(event, data) {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      // Sanitize event name — must not contain newlines or colons
+      const safeEvent = String(event).replace(/[\r\n:]/g, '_');
+      res.write(`event: ${safeEvent}\ndata: ${JSON.stringify(data)}\n\n`);
     },
     close() {
       res.end();

@@ -35,6 +35,17 @@ export class HitlEngine {
     // In-memory store as fallback when no DB and no Redis
     this._memStore = new Map();
 
+    // Periodic cleanup of expired in-memory entries (every 60s)
+    if (!this._db && !this._redis) {
+      this._cleanupTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [key, entry] of this._memStore) {
+          if (now > entry.expiresAt) this._memStore.delete(key);
+        }
+      }, 60_000);
+      this._cleanupTimer.unref();
+    }
+
     // Ensure hitl_pending table exists if using SQLite
     if (this._db && !this._redis) {
       this._db.exec(`

@@ -17,8 +17,7 @@
 
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
-import { getAllToolRegistry, getVerifiersForTool } from '../db.js';
-import { readBody, sendJson } from '../http-utils.js';
+import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
 
 /**
  * @param {import('http').IncomingMessage} req
@@ -68,45 +67,27 @@ export async function handleChatResume(req, res, ctx) {
   const systemPrompt = promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.';
 
   // Load promoted tools
-  const toolRows = getAllToolRegistry(db).filter(r => r.lifecycle_state === 'promoted');
-  const tools = [];
-  for (const row of toolRows) {
-    try {
-      const spec = JSON.parse(row.spec_json);
-      const schema = spec.schema || {};
-      const properties = {};
-      const required = [];
-      for (const [k, v] of Object.entries(schema)) {
-        properties[k] = { type: v.type || 'string', description: v.description || k };
-        if (!v.optional) required.push(k);
-      }
-      tools.push({
-        name: spec.name || row.tool_name,
-        description: spec.description || '',
-        jsonSchema: { type: 'object', properties, required }
-      });
-    } catch { /* skip */ }
-  }
+  const { toolRows, tools } = loadPromotedTools(db);
 
   // Start SSE
   const sse = initSSE(res);
 
   // Build per-request hooks
-  const { hitlEngine: hitlEng2, verifierRunner } = ctx;
+  const { verifierRunner } = ctx;
   if (verifierRunner) {
     try { await verifierRunner.loadFromDb(db); } catch { /* non-fatal */ }
   }
 
   const hooks = {
     shouldPause(toolCall) {
-      if (!hitlEng2) return { pause: false };
+      if (!hitlEngine) return { pause: false };
       let toolSpec = {};
       const row = toolRows.find(r => r.tool_name === toolCall.name);
       if (row?.spec_json) {
         try { toolSpec = JSON.parse(row.spec_json); } catch { /* ignore */ }
       }
       return {
-        pause: hitlEng2.shouldPause(effective.hitlLevel, toolSpec),
+        pause: hitlEngine.shouldPause(effective.hitlLevel, toolSpec),
         message: `Tool "${toolCall.name}" requires confirmation`
       };
     },
@@ -130,6 +111,7 @@ export async function handleChatResume(req, res, ctx) {
       tools,
       messages: pausedState.conversationMessages ?? [],
       maxTurns: config.maxTurns ?? 10,
+      maxTokens: config.maxTokens ?? 4096,
       forgeConfig: config,
       db,
       userJwt,

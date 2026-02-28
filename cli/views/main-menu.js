@@ -176,7 +176,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     width: '100%',
     height: 1,
     tags: true,
-    content: '{#333333-fg}' + '─'.repeat(200) + '{/#333333-fg}'
+    content: '{#333333-fg}' + '─'.repeat(screen.width || 200) + '{/#333333-fg}'
   });
 
   // ── Service notice bar (1 row, shown when service is not running) ─────────

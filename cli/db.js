@@ -164,6 +164,8 @@ CREATE TABLE IF NOT EXISTS verifier_tool_bindings (
   UNIQUE(verifier_name, tool_name),
   FOREIGN KEY (verifier_name) REFERENCES verifier_registry(verifier_name)
 );
+CREATE INDEX IF NOT EXISTS idx_vtb_tool_name
+  ON verifier_tool_bindings(tool_name, verifier_name);
 `;
 
 /**
@@ -262,7 +264,7 @@ export function insertEvalRun(db, row) {
     pass_rate: row.pass_rate ?? null,
     sample_type: row.sample_type ?? null
   });
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 /**
@@ -287,7 +289,7 @@ export function insertToolGeneration(db, row) {
     status: row.status ?? 'in_progress',
     notes: row.notes ?? null
   });
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 /**
@@ -342,7 +344,7 @@ export function insertModelComparison(db, row) {
     chosen_model: row.chosen_model ?? null,
     phase: row.phase ?? null
   });
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 /**
@@ -496,7 +498,7 @@ export function insertDriftAlert(db, row) {
     current_rate: row.current_rate ?? null,
     delta: row.delta ?? null
   });
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 /**
@@ -599,7 +601,7 @@ export function insertConversationMessage(db, { session_id, stage, role, content
     content,
     created_at: new Date().toISOString()
   });
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 export function getConversationHistory(db, session_id) {
@@ -642,7 +644,7 @@ export function insertMcpCallLog(db, row) {
     latency_ms: row.latency_ms ?? null,
     error: row.error ?? null
   });
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 export function getMcpCallLog(db, toolName = null, limit = 50) {

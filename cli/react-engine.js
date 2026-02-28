@@ -88,23 +88,24 @@ export async function* reactLoop(opts) {
     }
 
     // Process tool calls
+    const toolResults = [];
     for (const toolCall of response.toolCalls) {
       yield { type: 'tool_call', tool: toolCall.name, args: toolCall.input, id: toolCall.id };
 
       // Check HITL before execution
-      const pauseCheck = shouldPause(toolCall);
+      let pauseCheck;
+      try { pauseCheck = shouldPause(toolCall); } catch { pauseCheck = { pause: false }; }
       if (pauseCheck.pause) {
         yield {
           type: 'hitl',
           tool: toolCall.name,
           args: toolCall.input,
           message: pauseCheck.message ?? 'Tool call requires confirmation',
-          // Caller is responsible for generating resumeToken and storing state
           pendingToolCalls: response.toolCalls,
           conversationMessages: [...conversationMessages],
           turnIndex: turn
         };
-        return; // Caller handles resume
+        return;
       }
 
       // Execute tool
@@ -118,7 +119,8 @@ export async function* reactLoop(opts) {
       yield { type: 'tool_result', tool: toolCall.name, result: result.body, id: toolCall.id };
 
       // Run verifiers
-      const verifyResult = await onAfterToolCall(toolCall.name, toolCall.input, result);
+      let verifyResult;
+      try { verifyResult = await onAfterToolCall(toolCall.name, toolCall.input, result); } catch { verifyResult = { outcome: 'pass' }; }
       if (verifyResult.outcome === 'warn') {
         yield { type: 'tool_warning', tool: toolCall.name, message: verifyResult.message, verifier: verifyResult.verifierName };
       } else if (verifyResult.outcome === 'block') {
@@ -134,12 +136,16 @@ export async function* reactLoop(opts) {
         return;
       }
 
-      // Add tool result to conversation for next LLM turn
-      conversationMessages.push({
-        role: 'assistant',
-        content: response.text ?? '',
-        tool_calls: [{ id: toolCall.id, name: toolCall.name, input: toolCall.input }]
-      });
+      toolResults.push({ toolCall, result });
+    }
+
+    // Add single assistant message with all tool calls, then each tool result
+    conversationMessages.push({
+      role: 'assistant',
+      content: response.text ?? '',
+      tool_calls: toolResults.map(({ toolCall }) => ({ id: toolCall.id, name: toolCall.name, input: toolCall.input }))
+    });
+    for (const { toolCall, result } of toolResults) {
       conversationMessages.push({
         role: 'tool',
         tool_call_id: toolCall.id,

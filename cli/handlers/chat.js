@@ -14,8 +14,7 @@
 
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
-import { getAllToolRegistry, getVerifiersForTool } from '../db.js';
-import { readBody, sendJson } from '../http-utils.js';
+import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
 
 /**
  * @param {import('http').IncomingMessage} req
@@ -68,25 +67,7 @@ export async function handleChat(req, res, ctx) {
   await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message);
 
   // 7. Load promoted tools
-  const toolRows = getAllToolRegistry(db).filter(r => r.lifecycle_state === 'promoted');
-  const tools = [];
-  for (const row of toolRows) {
-    try {
-      const spec = JSON.parse(row.spec_json);
-      const schema = spec.schema || {};
-      const properties = {};
-      const required = [];
-      for (const [k, v] of Object.entries(schema)) {
-        properties[k] = { type: v.type || 'string', description: v.description || k };
-        if (!v.optional) required.push(k);
-      }
-      tools.push({
-        name: spec.name || row.tool_name,
-        description: spec.description || '',
-        jsonSchema: { type: 'object', properties, required }
-      });
-    } catch { /* skip malformed specs */ }
-  }
+  const { toolRows, tools } = loadPromotedTools(db);
 
   // 8. Start SSE stream
   const sse = initSSE(res);

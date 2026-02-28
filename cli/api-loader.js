@@ -43,7 +43,9 @@ function deriveName(path, method) {
 function parseOpenApiPaths(spec) {
   const endpoints = [];
   const paths = spec.paths || {};
-  const basePath = spec.servers?.[0]?.url?.replace(/\/$/, '') || '';
+  const rawBase = spec.servers?.[0]?.url?.replace(/\/$/, '') || '';
+  // Only use relative-path server bases (e.g. /api/v1); ignore full URLs
+  const basePath = rawBase.startsWith('/') ? rawBase : '';
 
   for (const [path, pathItem] of Object.entries(paths)) {
     if (typeof pathItem !== 'object' || pathItem === null) continue;
@@ -51,8 +53,9 @@ function parseOpenApiPaths(spec) {
     for (const method of methods) {
       const op = pathItem[method];
       if (!op) continue;
-      const fullPath = path.startsWith('/') ? path : `/${path}`;
-      const name = deriveName(fullPath, method.toUpperCase());
+      const relativePath = path.startsWith('/') ? path : `/${path}`;
+      const fullPath = `${basePath}${relativePath}`;
+      const name = deriveName(relativePath, method.toUpperCase());
       const params = {};
       for (const p of op.parameters || []) {
         if (p?.name) {

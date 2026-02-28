@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { createServer } from 'http';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { makeTestDb } from '../tests/helpers/db.js';
@@ -69,7 +70,7 @@ describe('createMcpServer — tools/list', () => {
     await server.close();
   });
 
-  it('tool with no schema fields → inputSchema has empty properties', async () => {
+  it('tool with no schema fields → inputSchema has empty properties, name and description present', async () => {
     upsertToolRegistry(db, {
       tool_name: 'no_params_tool',
       lifecycle_state: 'promoted',
@@ -80,6 +81,8 @@ describe('createMcpServer — tools/list', () => {
     const result = await client.listTools();
     expect(result.tools.length).toBe(1);
     const tool = result.tools[0];
+    expect(tool.name).toBe('no_params_tool');
+    expect(typeof tool.description).toBe('string');
     expect(tool.inputSchema).toBeDefined();
     expect(tool.inputSchema.type).toBe('object');
     expect(tool.inputSchema.properties).toEqual({});
@@ -117,6 +120,73 @@ describe('createMcpServer — tools/call', () => {
     expect(result.content[0].text).toContain('no mcpRouting');
     await client.close();
     await server.close();
+  });
+
+  it('successful HTTP endpoint → isError: false and response text in content', async () => {
+    const mockBody = { holdings: [{ symbol: 'AAPL', quantity: 10 }] };
+    const mockServer = createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(mockBody));
+    });
+    await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve));
+    const mockPort = mockServer.address().port;
+
+    try {
+      upsertToolRegistry(db, {
+        tool_name: 'get_holdings',
+        lifecycle_state: 'promoted',
+        spec_json: JSON.stringify({
+          name: 'get_holdings',
+          description: 'Get holdings',
+          mcpRouting: { endpoint: '/api/holdings', method: 'GET' }
+        })
+      });
+
+      const config = { api: { baseUrl: `http://127.0.0.1:${mockPort}` } };
+      const { client, server } = await makeConnectedPair(db, config);
+      const result = await client.callTool({ name: 'get_holdings', arguments: {} });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('AAPL');
+
+      await client.close();
+      await server.close();
+    } finally {
+      await new Promise((resolve) => mockServer.close(resolve));
+    }
+  });
+
+  it('non-200 HTTP response → isError: true', async () => {
+    const mockServer = createServer((req, res) => {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+    await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve));
+    const mockPort = mockServer.address().port;
+
+    try {
+      upsertToolRegistry(db, {
+        tool_name: 'missing_resource',
+        lifecycle_state: 'promoted',
+        spec_json: JSON.stringify({
+          name: 'missing_resource',
+          description: 'Hits a 404 endpoint',
+          mcpRouting: { endpoint: '/api/not-there', method: 'GET' }
+        })
+      });
+
+      const config = { api: { baseUrl: `http://127.0.0.1:${mockPort}` } };
+      const { client, server } = await makeConnectedPair(db, config);
+      const result = await client.callTool({ name: 'missing_resource', arguments: {} });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('404');
+
+      await client.close();
+      await server.close();
+    } finally {
+      await new Promise((resolve) => mockServer.close(resolve));
+    }
   });
 
   it('unreachable endpoint → isError: true AND call is logged', async () => {

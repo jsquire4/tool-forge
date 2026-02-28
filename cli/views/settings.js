@@ -110,7 +110,7 @@ function maskValue(val) {
   return val.slice(0, 3) + '****';
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const list = blessed.list({
     top: 0,
     left: 0,

@@ -135,17 +135,30 @@ describe('forge-service /mcp auth (Group 4)', () => {
     expect(body.queued).toBe(true);
   });
 
-  it('correct token → not 401 (MCP handler reached)', async () => {
+  it('correct token → 200 with non-empty MCP response', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
         'Authorization': `Bearer ${TEST_KEY}`
       },
       body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 })
     });
-    expect(res.status).not.toBe(401);
-    expect(res.status).not.toBe(503);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toBe('');
+  });
+
+  it('POST /enqueue missing endpoint field → 400', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/enqueue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toolName: 'forgot-endpoint-field' })
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/endpoint/i);
   });
 
   it('second /mcp request with correct token succeeds (per-request server)', async () => {

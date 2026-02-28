@@ -120,7 +120,7 @@ function loadEnv() {
 
 export function createView({
   screen, content, config, navigate, setFooter,
-  screenKey, openPopup, closePopup, startService
+  screenKey, openPopup, closePopup
 }) {
   const container = blessed.box({
     top: 0, left: 0, width: '100%', height: '100%', tags: true
@@ -263,10 +263,16 @@ export function createView({
     }
 
     try {
-      // Ensure alternating messages: if last message is assistant, add [continue]
+      // Ensure messages array is non-empty and ends with a user turn
       let callMessages = [...apiMessages];
-      if (
-        callMessages.length > 0 &&
+      if (callMessages.length === 0) {
+        // Seed the first turn so Anthropic never receives an empty messages array.
+        // Also push to apiMessages so the history starts with a user turn — without this
+        // the first assistant reply lands at index 0, making subsequent turns invalid.
+        const seed = { role: 'user', content: 'Begin.' };
+        callMessages = [seed];
+        apiMessages.push(seed);
+      } else if (
         callMessages[callMessages.length - 1].role === 'assistant' &&
         !userText
       ) {
@@ -285,11 +291,10 @@ export function createView({
 
       let text = result.text || '';
 
-      // Check for [STAGE_COMPLETE] marker
-      const stageCompletePattern = /^\[STAGE_COMPLETE\]\s*$/m;
-      const hasComplete = stageCompletePattern.test(text);
+      // Check for [STAGE_COMPLETE] marker — handle both inline and line-anchored
+      const hasComplete = /\[STAGE_COMPLETE\]/.test(text);
       if (hasComplete) {
-        text = text.replace(stageCompletePattern, '').trim();
+        text = text.replace(/\[STAGE_COMPLETE\]\s*/g, '').trim();
       }
 
       if (text) {
@@ -494,11 +499,12 @@ export function createView({
   });
 
   screenKey('b', () => {
+    if (busy) return;
+    openPopup();
     const confirm = blessed.question({
       parent: screen, border: 'line', height: 'shrink', width: 'half',
       top: 'center', left: 'center', label: ' Leave Forge Agent? ', tags: true, keys: true
     });
-    openPopup();
     confirm.ask('Leave? Session is saved and can be resumed. (y/n)', (err, answer) => {
       confirm.destroy();
       closePopup();

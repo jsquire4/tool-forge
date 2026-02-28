@@ -22,7 +22,11 @@ function extractJson(text) {
   // Strategy 1: ```json ... ``` fenced block
   const fenceMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
   if (fenceMatch) {
-    return JSON.parse(fenceMatch[1]);
+    try {
+      return JSON.parse(fenceMatch[1]);
+    } catch (_) {
+      // Fenced block was malformed JSON — fall through to strategy 2
+    }
   }
 
   // Strategy 2: first `{` to its matching `}`

@@ -137,7 +137,7 @@ async function loadComparisonData(toolName, perModelFromSession, config) {
 
 // ── View ───────────────────────────────────────────────────────────────────
 
-export function createView({ screen, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const toolName = config._comparisonTarget?.toolName || null;
   const perModel = config._comparisonTarget?.perModel || {};
   config._comparisonTarget = null; // consume — prevent stale reads on re-entry

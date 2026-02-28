@@ -38,7 +38,7 @@ const MAX_TOOL_DEPTH = 3;
 
 // ── View ───────────────────────────────────────────────────────────────────
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const container = blessed.box({ top: 0, left: 0, width: '100%', height: '100%', tags: true });
 
   // ── Info bar ──────────────────────────────────────────────────────────────
@@ -100,11 +100,13 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (env.ANTHROPIC_API_KEY) {
       provider = 'anthropic';
       apiKey = env.ANTHROPIC_API_KEY;
-      model = config?.model?.startsWith('claude') ? config.model : 'claude-sonnet-4-6';
+      const configModel = config?.models?.generation || config?.model;
+      model = configModel?.startsWith('claude') ? configModel : 'claude-sonnet-4-6';
     } else if (env.OPENAI_API_KEY) {
       provider = 'openai';
       apiKey = env.OPENAI_API_KEY;
-      model = config?.model && !config.model.startsWith('claude') ? config.model : 'gpt-4o-mini';
+      const configModel = config?.models?.generation || config?.model;
+      model = configModel && !configModel.startsWith('claude') ? configModel : 'gpt-4o-mini';
     } else {
       infoBar.setContent(
         ' {red-fg}⚠ No API key{/red-fg}  Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Settings → API Keys'

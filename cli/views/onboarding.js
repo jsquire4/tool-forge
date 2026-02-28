@@ -90,7 +90,7 @@ function detectApiKeyProvider(envMap) {
 // View
 // ---------------------------------------------------------------------------
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   // Track which steps are done: [apiKey, toolsDir, model]
   const completed = [false, false, false];
 

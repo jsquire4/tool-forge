@@ -44,7 +44,7 @@ async function loadData(config) {
 
 // ── View ───────────────────────────────────────────────────────────────────
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const container = blessed.box({
     top: 0,
     left: 0,

@@ -22,21 +22,21 @@ describe('conversations DB helpers', () => {
   // ── createSession ──────────────────────────────────────────────────────────
 
   it('createSession returns a non-empty string', () => {
-    const id = createSession(db);
+    const id = createSession();
     expect(typeof id).toBe('string');
     expect(id.length).toBeGreaterThan(0);
   });
 
   it('createSession returns a unique value each call', () => {
-    const a = createSession(db);
-    const b = createSession(db);
+    const a = createSession();
+    const b = createSession();
     expect(a).not.toBe(b);
   });
 
   // ── insertConversationMessage ──────────────────────────────────────────────
 
   it('insertConversationMessage inserts and returns a positive rowid', () => {
-    const sid = createSession(db);
+    const sid = createSession();
     const rowid = insertConversationMessage(db, {
       session_id: sid,
       stage: 'orient',
@@ -48,7 +48,7 @@ describe('conversations DB helpers', () => {
   });
 
   it('insertConversationMessage inserts for all valid roles', () => {
-    const sid = createSession(db);
+    const sid = createSession();
     for (const role of ['user', 'assistant', 'system']) {
       const rowid = insertConversationMessage(db, {
         session_id: sid,
@@ -68,13 +68,13 @@ describe('conversations DB helpers', () => {
   });
 
   it('getConversationHistory returns messages in created_at ASC order', async () => {
-    const sid = createSession(db);
+    const sid = createSession();
 
     insertConversationMessage(db, { session_id: sid, stage: 'orient', role: 'user', content: 'First' });
-    // Ensure distinct timestamps by bumping the created_at value via tiny wait
-    await new Promise((r) => setTimeout(r, 5));
+    // Use a generous wait to guarantee distinct millisecond timestamps
+    await new Promise((r) => setTimeout(r, 30));
     insertConversationMessage(db, { session_id: sid, stage: 'orient', role: 'assistant', content: 'Second' });
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 30));
     insertConversationMessage(db, { session_id: sid, stage: 'orient', role: 'user', content: 'Third' });
 
     const rows = getConversationHistory(db, sid);
@@ -85,7 +85,7 @@ describe('conversations DB helpers', () => {
   });
 
   it('getConversationHistory returns all messages for a session (100+ rows)', () => {
-    const sid = createSession(db);
+    const sid = createSession();
     const count = 105;
     for (let i = 0; i < count; i++) {
       insertConversationMessage(db, {
@@ -100,8 +100,8 @@ describe('conversations DB helpers', () => {
   });
 
   it('getConversationHistory only returns messages for the requested session', () => {
-    const sid1 = createSession(db);
-    const sid2 = createSession(db);
+    const sid1 = createSession();
+    const sid2 = createSession();
 
     insertConversationMessage(db, { session_id: sid1, stage: 'orient', role: 'user', content: 'From session 1' });
     insertConversationMessage(db, { session_id: sid2, stage: 'orient', role: 'user', content: 'From session 2' });
@@ -119,7 +119,7 @@ describe('conversations DB helpers', () => {
   });
 
   it('getIncompleteSessions returns session without COMPLETE marker', () => {
-    const sid = createSession(db);
+    const sid = createSession();
     insertConversationMessage(db, {
       session_id: sid, stage: 'orient', role: 'user', content: 'Hello'
     });
@@ -128,13 +128,13 @@ describe('conversations DB helpers', () => {
     });
 
     const sessions = getIncompleteSessions(db);
-    expect(sessions.length).toBeGreaterThanOrEqual(1);
+    expect(sessions.length).toBe(1);
     const found = sessions.find((s) => s.session_id === sid);
     expect(found).toBeTruthy();
   });
 
   it('getIncompleteSessions excludes completed sessions', () => {
-    const sid = createSession(db);
+    const sid = createSession();
     insertConversationMessage(db, {
       session_id: sid, stage: 'orient', role: 'user', content: 'Hello'
     });

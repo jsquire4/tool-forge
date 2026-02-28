@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { makeTestDb } from '../tests/helpers/db.js';
-import { computeCoverage } from './api-loader.js';
+import { computeCoverage, loadApis } from './api-loader.js';
 import { upsertToolRegistry } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -207,5 +207,67 @@ describe('computeCoverage', () => {
     const result = computeCoverage(SAMPLE_SPEC, db);
     expect(result.covered.length).toBe(0);
     expect(result.uncovered.length).toBe(result.total);
+  });
+});
+
+// ── loadApis ────────────────────────────────────────────────────────────────
+
+describe('loadApis', () => {
+  it('empty config object → returns []', async () => {
+    const endpoints = await loadApis({});
+    expect(endpoints).toEqual([]);
+  });
+
+  it('null/undefined config → returns []', async () => {
+    expect(await loadApis(null)).toEqual([]);
+    expect(await loadApis(undefined)).toEqual([]);
+  });
+
+  it('discovery.type=openapi with file → returns endpoints from the spec', async () => {
+    const config = {
+      discovery: {
+        type: 'openapi',
+        file: 'tests/fixtures/openapi/sample.json'
+      }
+    };
+    const endpoints = await loadApis(config);
+    expect(endpoints.length).toBe(8);
+    expect(endpoints.every((e) => e.path && e.method)).toBe(true);
+    expect(endpoints.every((e) => e.source === 'openapi')).toBe(true);
+  });
+
+  it('manifestPath → returns endpoints from manifest', async () => {
+    const config = {
+      manifestPath: 'tests/fixtures/manifest/sample.json'
+    };
+    const endpoints = await loadApis(config);
+    expect(endpoints.length).toBe(2);
+    const paths = endpoints.map((e) => e.path);
+    expect(paths).toContain('/api/orders');
+    expect(endpoints.every((e) => e.source === 'manifest')).toBe(true);
+  });
+
+  it('manifest overrides openapi for same path+method', async () => {
+    const config = {
+      discovery: {
+        type: 'openapi',
+        file: 'tests/fixtures/openapi/sample.json'
+      },
+      manifestPath: 'tests/fixtures/manifest/sample.json'
+    };
+    const endpoints = await loadApis(config);
+    // manifest adds 2 new paths; no overlap with sample.json, so total = 8 + 2
+    expect(endpoints.length).toBe(10);
+  });
+
+  it('nonexistent file → returns []', async () => {
+    const config = {
+      discovery: {
+        type: 'openapi',
+        file: 'tests/fixtures/openapi/does-not-exist.json'
+      }
+    };
+    const endpoints = await loadApis(config);
+    expect(endpoints).toEqual([]);
   });
 });

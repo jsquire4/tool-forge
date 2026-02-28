@@ -35,7 +35,7 @@ async function loadData(config) {
     }
   } catch (err) {
     // DB unavailable or schema mismatch — tools still display, just without eval/registry data
-    console.error('[tools-evals] DB load failed:', err.message);
+    // DB unavailable or schema mismatch — tools still display without eval/registry data
   }
 
   return tools.map((t) => {
@@ -62,7 +62,7 @@ async function loadData(config) {
   });
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const container = blessed.box({
     top: 0,
     left: 0,

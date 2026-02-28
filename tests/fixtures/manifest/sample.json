@@ -1,0 +1,17 @@
+{
+  "endpoints": [
+    {
+      "path": "/api/orders",
+      "method": "GET",
+      "name": "list_orders",
+      "description": "List all orders"
+    },
+    {
+      "path": "/api/orders",
+      "method": "POST",
+      "name": "create_order",
+      "description": "Create a new order",
+      "requiresConfirmation": true
+    }
+  ]
+}

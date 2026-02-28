@@ -59,7 +59,7 @@ import {
 } from './forge-agent.js';
 
 import { resolve } from 'path';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
 // ── Group 1: loadStageSkill ──────────────────────────────────────────────────
@@ -116,10 +116,8 @@ describe('loadStageSkill', () => {
  * Helper: load a stage skill from an arbitrary directory (for isolation).
  */
 function loadStageSkillFromDir(dir, stageName) {
-  const { existsSync, readFileSync } = require('fs');
-  const { resolve: pathResolve } = require('path');
   try {
-    const filePath = pathResolve(dir, `${stageName}.md`);
+    const filePath = resolve(dir, `${stageName}.md`);
     if (!existsSync(dir)) return '';
     if (!existsSync(filePath)) return '';
     const content = readFileSync(filePath, 'utf-8');

@@ -138,7 +138,7 @@ function buildItems(stats) {
   ];
 }
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const container = blessed.box({
     top: 0,
     left: 0,
@@ -146,6 +146,8 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     height: '100%',
     tags: true
   });
+
+  let serviceRunning = false;
 
   // ── Title banner ──────────────────────────────────────────────────────────
   const banner = blessed.box({
@@ -177,13 +179,23 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     content: '{#333333-fg}' + '─'.repeat(200) + '{/#333333-fg}'
   });
 
+  // ── Service notice bar (1 row, shown when service is not running) ─────────
+  const noticeBar = blessed.box({
+    parent: container,
+    top: BANNER_HEIGHT + 1,
+    left: 0,
+    width: '100%',
+    height: 1,
+    tags: true
+  });
+
   // ── Menu list ─────────────────────────────────────────────────────────────
   const list = blessed.list({
     parent: container,
-    top: BANNER_HEIGHT + 1,
+    top: BANNER_HEIGHT + 2,
     left: 2,
     width: '100%-4',
-    height: `100%-${BANNER_HEIGHT + 3}`,
+    height: `100%-${BANNER_HEIGHT + 4}`,
     tags: true,
     keys: true,
     vi: true,
@@ -204,10 +216,25 @@ export function createView({ screen, content, config, navigate, setFooter, scree
     if (MENU_ITEMS[idx]) navigate(MENU_ITEMS[idx].key);
   });
 
+  // ── s = start service (only when not running) ─────────────────────────────
+  screenKey('s', () => {
+    if (!serviceRunning) startService?.();
+  });
+
   container.refresh = async () => {
     try {
       const stats = await buildStats(config);
+      serviceRunning = stats.serviceRunning;
       list.setItems(buildItems(stats));
+
+      if (!serviceRunning) {
+        noticeBar.setContent(
+          ' {yellow-fg}⚡ Forge service not running{/yellow-fg}' +
+          '  {cyan-fg}s{/cyan-fg} {#888888-fg}to start{/#888888-fg}'
+        );
+      } else {
+        noticeBar.setContent('');
+      }
 
       setFooter(
         ' {cyan-fg}↑↓{/cyan-fg} navigate  {cyan-fg}Enter{/cyan-fg} select' +

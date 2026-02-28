@@ -409,18 +409,7 @@ export async function runEvals(toolName, config, projectRoot, onProgress) {
  */
 export async function runEvalsMultiPass(toolName, config, projectRoot, options = {}, onProgress) {
   // Resolve env for API key lookup
-  const envPath = resolve(projectRoot, '.env');
-  const env = {};
-  if (existsSync(envPath)) {
-    const lines = readFileSync(envPath, 'utf-8').split('\n');
-    for (const line of lines) {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) continue;
-      const eq = t.indexOf('=');
-      if (eq === -1) continue;
-      env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-    }
-  }
+  const env = loadEnv(projectRoot);
 
   const matrixNames = options.modelMatrix || config?.modelMatrix || [];
   if (matrixNames.length === 0) {

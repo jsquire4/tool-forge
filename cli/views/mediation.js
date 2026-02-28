@@ -30,7 +30,7 @@ function loadEnv(projectRoot) {
 
 // ── View ───────────────────────────────────────────────────────────────────
 
-export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup }) {
+export function createView({ screen, content, config, navigate, setFooter, screenKey, openPopup, closePopup, startService }) {
   const toolName = config._mediationTarget || null;
   config._mediationTarget = null; // consume — prevent stale reads on re-entry
 

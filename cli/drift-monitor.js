@@ -63,7 +63,7 @@ export function computeSuspects(db, toolName) {
         AND pass_rate >= ?
       ORDER BY run_at DESC
       LIMIT 1
-    `).get(toolName, registryRow.baseline_pass_rate || 0.8);
+    `).get(toolName, registryRow.baseline_pass_rate ?? 0.8);
   } catch (_) {
     return [];
   }
@@ -128,20 +128,20 @@ export function checkDrift(db, toolName, threshold = 0.1, windowSize = 5) {
   const suspects = computeSuspects(db, toolName);
 
   if (!openAlert) {
-    // Insert drift alert
+    // Insert drift alert + flag the tool atomically — partial writes corrupt drift triangulation
+    const now = new Date().toISOString();
     try {
-      db.prepare(`
-        INSERT INTO drift_alerts (tool_name, detected_at, trigger_tools, baseline_rate, current_rate, delta, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'open')
-      `).run(toolName, new Date().toISOString(), JSON.stringify(suspects), baseline, currentRate, delta);
-    } catch (_) { /* non-fatal */ }
+      db.transaction(() => {
+        db.prepare(`
+          INSERT INTO drift_alerts (tool_name, detected_at, trigger_tools, baseline_rate, current_rate, delta, status)
+          VALUES (?, ?, ?, ?, ?, ?, 'open')
+        `).run(toolName, now, JSON.stringify(suspects), baseline, currentRate, delta);
 
-    // Mark tool as flagged
-    try {
-      db.prepare(`
-        UPDATE tool_registry SET lifecycle_state = 'flagged', flagged_at = ?
-        WHERE tool_name = ? AND lifecycle_state != 'flagged'
-      `).run(new Date().toISOString(), toolName);
+        db.prepare(`
+          UPDATE tool_registry SET lifecycle_state = 'flagged', flagged_at = ?
+          WHERE tool_name = ? AND lifecycle_state != 'flagged'
+        `).run(now, toolName);
+      })();
     } catch (_) { /* non-fatal */ }
   }
 

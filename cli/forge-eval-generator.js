@@ -24,9 +24,12 @@ function extractJsonArray(text) {
   // Strategy 1: ```json ... ``` fenced block
   const fenceMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
   if (fenceMatch) {
-    const parsed = JSON.parse(fenceMatch[1]);
-    if (Array.isArray(parsed)) return parsed;
-    throw new Error('Fenced JSON block did not contain an array');
+    try {
+      const parsed = JSON.parse(fenceMatch[1]);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (_) {
+      // Fenced block was malformed JSON — fall through to strategy 2
+    }
   }
 
   // Strategy 2: first `[` to its matching `]`

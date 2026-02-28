@@ -7,6 +7,7 @@
  */
 
 import { getUserPreferences, upsertUserPreferences } from './db.js';
+import { detectProvider, resolveApiKey } from './api-client.js';
 
 const VALID_HITL_LEVELS = ['autonomous', 'cautious', 'standard', 'paranoid'];
 
@@ -75,23 +76,3 @@ export function makePreferenceStore(config, db) {
   return new PreferenceStore(db);
 }
 
-// ── Internal helpers (duplicated from api-client.js for independence) ─────
-
-function detectProvider(model) {
-  if (!model) return 'anthropic';
-  if (model.startsWith('claude-')) return 'anthropic';
-  if (model.startsWith('gemini-')) return 'google';
-  if (model.startsWith('deepseek-')) return 'deepseek';
-  if (model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3')) return 'openai';
-  return 'anthropic';
-}
-
-function resolveApiKey(provider, env) {
-  switch (provider) {
-    case 'anthropic': return env.ANTHROPIC_API_KEY ?? null;
-    case 'openai':    return env.OPENAI_API_KEY ?? null;
-    case 'google':    return env.GOOGLE_API_KEY ?? env.GEMINI_API_KEY ?? null;
-    case 'deepseek':  return env.DEEPSEEK_API_KEY ?? null;
-    default:          return env.ANTHROPIC_API_KEY ?? null;
-  }
-}

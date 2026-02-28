@@ -32,35 +32,35 @@ describe('HitlEngine', () => {
   });
 
   describe('pause + resume (in-memory)', () => {
-    it('round-trip works', () => {
+    it('round-trip works', async () => {
       const engine = new HitlEngine();
-      const token = engine.pause({ foo: 'bar' });
+      const token = await engine.pause({ foo: 'bar' });
       expect(typeof token).toBe('string');
 
-      const state = engine.resume(token);
+      const state = await engine.resume(token);
       expect(state).toEqual({ foo: 'bar' });
     });
 
-    it('resume returns null on wrong token', () => {
+    it('resume returns null on wrong token', async () => {
       const engine = new HitlEngine();
-      engine.pause({ foo: 'bar' });
-      expect(engine.resume('wrong-token')).toBeNull();
+      await engine.pause({ foo: 'bar' });
+      expect(await engine.resume('wrong-token')).toBeNull();
     });
 
-    it('token is one-time use', () => {
+    it('token is one-time use', async () => {
       const engine = new HitlEngine();
-      const token = engine.pause({ data: 1 });
-      expect(engine.resume(token)).toEqual({ data: 1 });
-      expect(engine.resume(token)).toBeNull();
+      const token = await engine.pause({ data: 1 });
+      expect(await engine.resume(token)).toEqual({ data: 1 });
+      expect(await engine.resume(token)).toBeNull();
     });
 
-    it('resume returns null after TTL expiry', () => {
+    it('resume returns null after TTL expiry', async () => {
       const engine = new HitlEngine({ ttlMs: 1 }); // 1ms TTL
-      const token = engine.pause({ data: 1 });
+      const token = await engine.pause({ data: 1 });
       // Wait a tick for expiry
       const start = Date.now();
       while (Date.now() - start < 5) { /* busy wait */ }
-      expect(engine.resume(token)).toBeNull();
+      expect(await engine.resume(token)).toBeNull();
     });
   });
 
@@ -68,34 +68,127 @@ describe('HitlEngine', () => {
     let db;
     beforeEach(() => { db = makeTestDb(); });
 
-    it('round-trip works', () => {
+    it('round-trip works', async () => {
       const engine = new HitlEngine({ db });
-      const token = engine.pause({ session: 'abc', tools: ['get_weather'] });
-      const state = engine.resume(token);
+      const token = await engine.pause({ session: 'abc', tools: ['get_weather'] });
+      const state = await engine.resume(token);
       expect(state).toEqual({ session: 'abc', tools: ['get_weather'] });
     });
 
-    it('resume returns null for expired token', () => {
+    it('resume returns null for expired token', async () => {
       const engine = new HitlEngine({ db, ttlMs: 1 });
-      const token = engine.pause({ data: 1 });
+      const token = await engine.pause({ data: 1 });
       const start = Date.now();
       while (Date.now() - start < 5) { /* busy wait */ }
-      expect(engine.resume(token)).toBeNull();
+      expect(await engine.resume(token)).toBeNull();
     });
 
-    it('resume returns null for wrong token', () => {
+    it('resume returns null for wrong token', async () => {
       const engine = new HitlEngine({ db });
-      engine.pause({ data: 1 });
-      expect(engine.resume('wrong-token')).toBeNull();
+      await engine.pause({ data: 1 });
+      expect(await engine.resume('wrong-token')).toBeNull();
     });
   });
 
-  it('makeHitlEngine factory creates engine', () => {
+  describe('pause + resume (Redis)', () => {
+    /** Minimal Redis mock — Map-backed with EX support */
+    function createRedisMock() {
+      const store = new Map();
+      const timers = new Map();
+      return {
+        store,
+        async set(key, value, flag, ttl) {
+          store.set(key, value);
+          if (flag === 'EX' && ttl) {
+            const timer = setTimeout(() => store.delete(key), ttl * 1000);
+            timers.set(key, timer);
+          }
+        },
+        async get(key) {
+          return store.get(key) ?? null;
+        },
+        async del(key) {
+          store.delete(key);
+          const timer = timers.get(key);
+          if (timer) { clearTimeout(timer); timers.delete(key); }
+        }
+      };
+    }
+
+    it('round-trip works', async () => {
+      const redis = createRedisMock();
+      const engine = new HitlEngine({ redis });
+      const token = await engine.pause({ session: 'xyz', tools: ['search'] });
+      expect(typeof token).toBe('string');
+
+      const state = await engine.resume(token);
+      expect(state).toEqual({ session: 'xyz', tools: ['search'] });
+    });
+
+    it('token is one-time use', async () => {
+      const redis = createRedisMock();
+      const engine = new HitlEngine({ redis });
+      const token = await engine.pause({ data: 42 });
+      expect(await engine.resume(token)).toEqual({ data: 42 });
+      expect(await engine.resume(token)).toBeNull();
+    });
+
+    it('resume returns null on wrong token', async () => {
+      const redis = createRedisMock();
+      const engine = new HitlEngine({ redis });
+      await engine.pause({ data: 1 });
+      expect(await engine.resume('wrong-token')).toBeNull();
+    });
+
+    it('stores with correct key prefix and TTL args', async () => {
+      const redis = createRedisMock();
+      const engine = new HitlEngine({ redis, ttlMs: 60000 }); // 60s
+      const token = await engine.pause({ data: 1 });
+
+      // Verify key format
+      const key = `forge:hitl:${token}`;
+      expect(redis.store.has(key)).toBe(true);
+
+      // Verify stored value is JSON
+      const stored = redis.store.get(key);
+      expect(JSON.parse(stored)).toEqual({ data: 1 });
+    });
+
+    it('redis takes priority over sqlite', async () => {
+      const redis = createRedisMock();
+      const db = makeTestDb();
+      // When both are provided, Redis should be used
+      const engine = new HitlEngine({ redis, db });
+      const token = await engine.pause({ via: 'redis' });
+
+      // Should be in Redis, not SQLite
+      expect(redis.store.size).toBe(1);
+
+      const state = await engine.resume(token);
+      expect(state).toEqual({ via: 'redis' });
+    });
+  });
+
+  it('makeHitlEngine factory creates engine with db', async () => {
     const db = makeTestDb();
     const engine = makeHitlEngine({}, db);
     expect(engine).toBeInstanceOf(HitlEngine);
-    // Verify it works
-    const token = engine.pause({ test: true });
-    expect(engine.resume(token)).toEqual({ test: true });
+    const token = await engine.pause({ test: true });
+    expect(await engine.resume(token)).toEqual({ test: true });
+  });
+
+  it('makeHitlEngine factory prefers redis when provided', async () => {
+    const db = makeTestDb();
+    const redisMock = {
+      store: new Map(),
+      async set(k, v, flag, ttl) { this.store.set(k, v); },
+      async get(k) { return this.store.get(k) ?? null; },
+      async del(k) { this.store.delete(k); }
+    };
+    const engine = makeHitlEngine({}, db, redisMock);
+    expect(engine).toBeInstanceOf(HitlEngine);
+    const token = await engine.pause({ test: true });
+    expect(redisMock.store.size).toBe(1);
+    expect(await engine.resume(token)).toEqual({ test: true });
   });
 });

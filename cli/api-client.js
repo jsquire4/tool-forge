@@ -375,7 +375,7 @@ const ROLE_DEFAULTS = {
  * @param {string} model
  * @returns {'anthropic'|'openai'|'google'|'deepseek'}
  */
-function detectProvider(model) {
+export function detectProvider(model) {
   if (!model) return 'anthropic';
   if (model.startsWith('claude-')) return 'anthropic';
   if (model.startsWith('gemini-')) return 'google';
@@ -387,6 +387,23 @@ function detectProvider(model) {
   ) return 'openai';
   // Fallback: assume anthropic for unknown model names
   return 'anthropic';
+}
+
+/**
+ * Resolve the API key for a given provider from environment variables.
+ *
+ * @param {string} provider
+ * @param {object} env — process.env or equivalent
+ * @returns {string|null}
+ */
+export function resolveApiKey(provider, env) {
+  switch (provider) {
+    case 'anthropic': return env?.ANTHROPIC_API_KEY ?? null;
+    case 'openai':    return env?.OPENAI_API_KEY ?? null;
+    case 'google':    return env?.GOOGLE_API_KEY ?? env?.GEMINI_API_KEY ?? null;
+    case 'deepseek':  return env?.DEEPSEEK_API_KEY ?? null;
+    default:          return env?.ANTHROPIC_API_KEY ?? null;
+  }
 }
 
 /**
@@ -417,12 +434,7 @@ export function resolveModelConfig(config, env, role = 'generation') {
     null;
 
   const provider = detectProvider(model);
-
-  let apiKey = null;
-  if (provider === 'anthropic') apiKey = env?.ANTHROPIC_API_KEY ?? null;
-  else if (provider === 'openai') apiKey = env?.OPENAI_API_KEY ?? null;
-  else if (provider === 'google') apiKey = env?.GOOGLE_API_KEY ?? env?.GEMINI_API_KEY ?? null;
-  else if (provider === 'deepseek') apiKey = env?.DEEPSEEK_API_KEY ?? null;
+  const apiKey = resolveApiKey(provider, env);
 
   return { provider, apiKey, model };
 }
@@ -438,10 +450,6 @@ export function resolveModelConfig(config, env, role = 'generation') {
 export function modelConfigForName(modelName, env) {
   if (!modelName) throw new Error('modelConfigForName: modelName is required');
   const provider = detectProvider(modelName);
-  let apiKey = null;
-  if (provider === 'anthropic') apiKey = env?.ANTHROPIC_API_KEY ?? null;
-  else if (provider === 'openai') apiKey = env?.OPENAI_API_KEY ?? null;
-  else if (provider === 'google') apiKey = env?.GOOGLE_API_KEY ?? env?.GEMINI_API_KEY ?? null;
-  else if (provider === 'deepseek') apiKey = env?.DEEPSEEK_API_KEY ?? null;
+  const apiKey = resolveApiKey(provider, env);
   return { provider, apiKey, model: modelName };
 }

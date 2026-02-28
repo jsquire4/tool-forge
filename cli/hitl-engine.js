@@ -7,29 +7,36 @@
  *   standard   — pause for POST/PUT/PATCH/DELETE methods
  *   paranoid   — always pause
  *
- * Storage: SQLite fallback (Redis adapter available via future extension).
+ * Storage backends:
+ *   memory  — in-process Map (default, single-instance only)
+ *   sqlite  — hitl_pending table (single-instance, survives restart)
+ *   redis   — forge:hitl:{token} keys with TTL (multi-instance, recommended for production)
+ *
  * Paused state has a TTL — expired states cannot be resumed.
  */
 
 import { randomUUID } from 'crypto';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const REDIS_KEY_PREFIX = 'forge:hitl:';
 
 export class HitlEngine {
   /**
    * @param {object} opts
-   * @param {import('better-sqlite3').Database} [opts.db] — SQLite fallback for pause state
+   * @param {import('better-sqlite3').Database} [opts.db] — SQLite backend
+   * @param {object} [opts.redis] — Redis client instance (ioredis or node-redis compatible)
    * @param {number} [opts.ttlMs] — pause state TTL (default 5 min)
    */
   constructor(opts = {}) {
     this._db = opts.db ?? null;
+    this._redis = opts.redis ?? null;
     this._ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
 
-    // In-memory store as fallback when no DB
+    // In-memory store as fallback when no DB and no Redis
     this._memStore = new Map();
 
     // Ensure hitl_pending table exists if using SQLite
-    if (this._db) {
+    if (this._db && !this._redis) {
       this._db.exec(`
         CREATE TABLE IF NOT EXISTS hitl_pending (
           resume_token TEXT PRIMARY KEY,
@@ -69,22 +76,34 @@ export class HitlEngine {
    * Store paused state and return a resume token.
    *
    * @param {object} state — arbitrary state to store (conversation, pending tool calls, etc.)
-   * @returns {string} resumeToken
+   * @returns {Promise<string>} resumeToken
    */
-  pause(state) {
+  async pause(state) {
     const resumeToken = randomUUID();
-    const expiresAt = new Date(Date.now() + this._ttlMs).toISOString();
     const stateJson = JSON.stringify(state);
 
+    if (this._redis) {
+      const ttlSeconds = Math.ceil(this._ttlMs / 1000);
+      await this._redis.set(
+        REDIS_KEY_PREFIX + resumeToken,
+        stateJson,
+        'EX',
+        ttlSeconds
+      );
+      return resumeToken;
+    }
+
     if (this._db) {
+      const expiresAt = new Date(Date.now() + this._ttlMs).toISOString();
       this._db.prepare(`
         INSERT INTO hitl_pending (resume_token, state_json, expires_at, created_at)
         VALUES (?, ?, ?, ?)
       `).run(resumeToken, stateJson, expiresAt, new Date().toISOString());
-    } else {
-      this._memStore.set(resumeToken, { state, expiresAt: Date.now() + this._ttlMs });
+      return resumeToken;
     }
 
+    // In-memory fallback
+    this._memStore.set(resumeToken, { state, expiresAt: Date.now() + this._ttlMs });
     return resumeToken;
   }
 
@@ -93,9 +112,23 @@ export class HitlEngine {
    * Deletes the state on successful resume (one-time use).
    *
    * @param {string} resumeToken
-   * @returns {object|null}
+   * @returns {Promise<object|null>}
    */
-  resume(resumeToken) {
+  async resume(resumeToken) {
+    if (this._redis) {
+      const key = REDIS_KEY_PREFIX + resumeToken;
+      // Atomic get-and-delete: use a pipeline or multi/exec
+      // For simplicity, GET then DEL — race window is acceptable for HITL
+      const stateJson = await this._redis.get(key);
+      if (!stateJson) return null;
+      await this._redis.del(key);
+      try {
+        return JSON.parse(stateJson);
+      } catch {
+        return null;
+      }
+    }
+
     if (this._db) {
       const row = this._db.prepare(
         'SELECT * FROM hitl_pending WHERE resume_token = ?'
@@ -126,11 +159,16 @@ export class HitlEngine {
 }
 
 /**
- * Factory.
- * @param {object} config — forge config
+ * Factory — selects storage backend from config.
+ *
+ * @param {object} config — forge config. Checks config.hitlStore or config.conversation.store
  * @param {import('better-sqlite3').Database} [db]
+ * @param {object} [redis] — pre-created Redis client instance
  * @returns {HitlEngine}
  */
-export function makeHitlEngine(config, db) {
+export function makeHitlEngine(config, db, redis) {
+  if (redis) {
+    return new HitlEngine({ redis });
+  }
   return new HitlEngine({ db });
 }

@@ -10,6 +10,7 @@
  */
 
 import { authenticateAdmin } from '../auth.js';
+import { readBody, sendJson } from '../http-utils.js';
 
 const VALID_SECTIONS = ['model', 'hitl', 'permissions', 'conversation'];
 
@@ -89,24 +90,6 @@ function applyOverlay(config, section, values) {
       if (values.window) config.conversation = { ...config.conversation, window: values.window };
       break;
   }
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (chunk) => { data += chunk; });
-    req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
-    });
-  });
-}
-
-function sendJson(res, statusCode, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
-  res.end(payload);
 }
 
 /**

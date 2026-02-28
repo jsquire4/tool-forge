@@ -93,7 +93,7 @@ describe('handleChatResume', () => {
     const ctx = makeCtx(db);
 
     // Pause a state
-    const resumeToken = ctx.hitlEngine.pause({
+    const resumeToken = await ctx.hitlEngine.pause({
       conversationMessages: [{ role: 'user', content: 'test' }],
       sessionId: 'sess-1'
     });
@@ -121,7 +121,7 @@ describe('handleChatResume', () => {
   it('valid token + rejected → cancellation', async () => {
     const token = makeJwt({ sub: 'user-1' });
     const ctx = makeCtx(db);
-    const resumeToken = ctx.hitlEngine.pause({ data: 'test' });
+    const resumeToken = await ctx.hitlEngine.pause({ data: 'test' });
 
     const res = makeRes();
     await handleChatResume(

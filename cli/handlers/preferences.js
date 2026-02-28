@@ -5,6 +5,8 @@
  * PUT  /agent-api/user/preferences — update preferences (gated by config)
  */
 
+import { readBody, sendJson } from '../http-utils.js';
+
 const VALID_HITL_LEVELS = ['autonomous', 'cautious', 'standard', 'paranoid'];
 
 /**
@@ -78,20 +80,3 @@ export async function handlePutPreferences(req, res, ctx) {
   sendJson(res, 200, { ok: true, updated: prefs });
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (chunk) => { data += chunk; });
-    req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
-    });
-  });
-}
-
-function sendJson(res, statusCode, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
-  res.end(payload);
-}

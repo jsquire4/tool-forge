@@ -15,6 +15,7 @@
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
 import { getAllToolRegistry } from '../db.js';
+import { readBody, sendJson } from '../http-utils.js';
 
 /**
  * @param {import('http').IncomingMessage} req
@@ -134,20 +135,3 @@ export async function handleChat(req, res, ctx) {
   sse.close();
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (chunk) => { data += chunk; });
-    req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
-    });
-  });
-}
-
-function sendJson(res, statusCode, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
-  res.end(payload);
-}

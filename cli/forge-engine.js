@@ -359,12 +359,13 @@ function extractJson(text) {
  *
  * @param {object[]} messages         - Current conversation history (immutable)
  * @param {string|null} userInput     - New user message, or null to skip
- * @param {string} systemPrompt       - Phase system prompt
+ * @param {string} systemPrompt       - Phase system prompt (may be overridden via state._systemPromptOverride)
  * @param {object} modelConfig        - { provider, apiKey, model }
  * @param {string|null} [retryHint]   - If set, appended to system prompt to guide correction
+ * @param {string|null} [overridePrompt] - When non-empty, fully replaces systemPrompt for this turn
  * @returns {Promise<{ assistantText: string, newMessages: object[] }>}
  */
-async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint = null) {
+async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint = null, overridePrompt = null) {
   const newMessages = [...messages];
 
   if (userInput !== null && userInput !== undefined) {
@@ -380,9 +381,10 @@ async function callLlm(messages, userInput, systemPrompt, modelConfig, retryHint
     (userInput === null || userInput === undefined)
   ) ? [...newMessages, { role: 'user', content: '[continue]' }] : newMessages;
 
+  const basePrompt = (overridePrompt && overridePrompt.trim()) ? overridePrompt : systemPrompt;
   const fullSystem = retryHint
-    ? systemPrompt + '\n\nPrevious attempt failed: ' + retryHint + '\nPlease correct the JSON.'
-    : systemPrompt;
+    ? basePrompt + '\n\nPrevious attempt failed: ' + retryHint + '\nPlease correct the JSON.'
+    : basePrompt;
 
   let result;
   try {
@@ -414,7 +416,9 @@ async function handleExplore({ state, userInput, modelConfig }) {
     state.messages,
     userInput,
     systemPrompt,
-    modelConfig
+    modelConfig,
+    null,
+    state._systemPromptOverride || null
   );
 
   // Advance after the AI has asked its opening question AND the user has replied.
@@ -461,7 +465,9 @@ async function handleSkeptic({ state, userInput, modelConfig, existingTools }) {
     state.messages,
     userInput,
     systemPrompt,
-    modelConfig
+    modelConfig,
+    null,
+    state._systemPromptOverride || null
   );
 
   const { overlaps, clear } = parseSkepticResult(assistantText);
@@ -541,7 +547,8 @@ async function handleJsonPhase({
     userInput,
     systemPrompt,
     modelConfig,
-    retryHint
+    retryHint,
+    state._systemPromptOverride || null
   );
 
   const extracted = extractJson(assistantText);
@@ -726,7 +733,9 @@ async function handleConfirm({ state, userInput, modelConfig }) {
     state.messages,
     userInput,
     systemPrompt,
-    modelConfig
+    modelConfig,
+    null,
+    state._systemPromptOverride || null
   );
 
   const confirmed = typeof userInput === 'string' && /^yes$/i.test(userInput.trim());
@@ -874,12 +883,15 @@ function handleDone({ state }) {
  * Advance the forge state machine by one step.
  *
  * @param {object} opts
- * @param {object}        opts.state          - Current forge state (from createInitialState or prior forgeStep)
- * @param {string|null}   opts.userInput      - User message, or null for auto-advance phases
- * @param {object}        opts.modelConfig    - { provider, apiKey, model }
- * @param {string[]}      [opts.existingTools] - Names of tools already in the registry
- * @param {object}        [opts.projectConfig] - Project-level config (passed through, not consumed here)
- * @param {string}        [opts.projectRoot]  - Absolute path to project root (used for file path construction)
+ * @param {object}        opts.state                 - Current forge state (from createInitialState or prior forgeStep)
+ * @param {string|null}   opts.userInput             - User message, or null for auto-advance phases
+ * @param {object}        opts.modelConfig           - { provider, apiKey, model }
+ * @param {string[]}      [opts.existingTools]       - Names of tools already in the registry
+ * @param {object}        [opts.projectConfig]       - Project-level config (passed through, not consumed here)
+ * @param {string}        [opts.projectRoot]         - Absolute path to project root (used for file path construction)
+ * @param {string}        [opts.systemPromptOverride] - When provided and non-empty, replaces the phase's
+ *                                                      default system prompt for this turn only.
+ *                                                      Does not mutate forgeState.
  * @returns {Promise<{
  *   nextState: object,
  *   assistantText: string,
@@ -894,48 +906,77 @@ export async function forgeStep({
   modelConfig,
   existingTools = [],
   projectConfig,
-  projectRoot
+  projectRoot,
+  systemPromptOverride
 }) {
   const phase = state.phase;
 
+  // When a systemPromptOverride is provided, temporarily stamp it onto the
+  // state so callLlm can read it.  It is stripped from nextState before return
+  // so it does not persist across turns.
+  const s = systemPromptOverride
+    ? { ...state, _systemPromptOverride: systemPromptOverride }
+    : state;
+
+  let result;
   switch (phase) {
     case 'explore':
-      return handleExplore({ state, userInput, modelConfig });
+      result = await handleExplore({ state: s, userInput, modelConfig });
+      break;
 
     case 'skeptic':
-      return handleSkeptic({ state, userInput, modelConfig, existingTools });
+      result = await handleSkeptic({ state: s, userInput, modelConfig, existingTools });
+      break;
 
     case 'description':
-      return handleDescription({ state, userInput, modelConfig });
+      result = await handleDescription({ state: s, userInput, modelConfig });
+      break;
 
     case 'fields':
-      return handleFields({ state, userInput, modelConfig });
+      result = await handleFields({ state: s, userInput, modelConfig });
+      break;
 
     case 'routing':
-      return handleRouting({ state, userInput, modelConfig });
+      result = await handleRouting({ state: s, userInput, modelConfig });
+      break;
 
     case 'deps':
-      return handleDeps({ state, userInput, modelConfig });
+      result = await handleDeps({ state: s, userInput, modelConfig });
+      break;
 
     case 'confirm':
-      return handleConfirm({ state, userInput, modelConfig });
+      result = await handleConfirm({ state: s, userInput, modelConfig });
+      break;
 
     case 'generate':
-      return handleGenerate({ state, projectRoot });
+      result = handleGenerate({ state: s, projectRoot });
+      break;
 
     case 'test':
-      return handleTest({ state });
+      result = handleTest({ state: s });
+      break;
 
     case 'evals':
-      return handleEvals({ state, userInput, modelConfig, projectConfig });
+      result = await handleEvals({ state: s, userInput, modelConfig, projectConfig });
+      break;
 
     case 'verifiers':
-      return handleVerifiers({ state });
+      result = handleVerifiers({ state: s });
+      break;
 
     case 'done':
-      return handleDone({ state });
+      result = handleDone({ state: s });
+      break;
 
     default:
       throw new Error(`forgeStep: unknown phase "${phase}".`);
   }
+
+  // Strip the override flag from nextState so it doesn't persist across turns.
+  if (result && result.nextState && '_systemPromptOverride' in result.nextState) {
+    const { _systemPromptOverride: _stripped, ...cleanState } = result.nextState;
+    result = { ...result, nextState: cleanState };
+  }
+
+  return result;
 }

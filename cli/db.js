@@ -6,6 +6,7 @@
  *   eval_runs(id, tool_name, run_at, eval_type, total_cases, passed, failed, notes)
  */
 
+import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
 
 const SCHEMA = `
@@ -86,6 +87,17 @@ CREATE TABLE IF NOT EXISTS model_comparisons (
   chosen_model TEXT,
   phase TEXT
 );
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  stage      TEXT NOT NULL,
+  role       TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+  content    TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_session
+  ON conversations(session_id, created_at);
 `;
 
 /**
@@ -502,4 +514,71 @@ export function getModelComparisonData(db, toolName) {
     GROUP BY model
     ORDER BY (passed * 1.0 / COUNT(*)) DESC
   `).all(toolName);
+}
+
+// ── conversations ───────────────────────────────────────────────────────────
+
+/**
+ * Create a new session ID using Node's built-in crypto.randomUUID.
+ * @returns {string} UUID session ID
+ */
+export function createSession() {
+  return randomUUID();
+}
+
+/**
+ * Insert a conversation message row.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ session_id: string; stage: string; role: 'user'|'assistant'|'system'; content: string }} row
+ * @returns {number} lastInsertRowid
+ */
+export function insertConversationMessage(db, { session_id, stage, role, content }) {
+  const result = db.prepare(`
+    INSERT INTO conversations (session_id, stage, role, content, created_at)
+    VALUES (@session_id, @stage, @role, @content, @created_at)
+  `).run({
+    session_id,
+    stage,
+    role,
+    content,
+    created_at: new Date().toISOString()
+  });
+  return result.lastInsertRowid;
+}
+
+/**
+ * Get all messages for a session ordered by created_at ASC.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} session_id
+ * @returns {object[]}
+ */
+export function getConversationHistory(db, session_id) {
+  return db.prepare(`
+    SELECT * FROM conversations
+    WHERE session_id = ?
+    ORDER BY created_at ASC
+  `).all(session_id);
+}
+
+/**
+ * Get incomplete sessions — sessions that have no system row with content='[COMPLETE]'.
+ * Returns [{ session_id, stage, last_updated }] ordered by last_updated DESC.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {Array<{ session_id: string; stage: string; last_updated: string }>}
+ */
+export function getIncompleteSessions(db) {
+  return db.prepare(`
+    SELECT
+      c.session_id,
+      c.stage,
+      MAX(c.created_at) AS last_updated
+    FROM conversations c
+    WHERE c.session_id NOT IN (
+      SELECT DISTINCT session_id
+      FROM conversations
+      WHERE role = 'system' AND content = '[COMPLETE]'
+    )
+    GROUP BY c.session_id
+    ORDER BY last_updated DESC
+  `).all();
 }

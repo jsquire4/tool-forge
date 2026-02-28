@@ -11,7 +11,7 @@
  *
  * Stage skill files are loaded from context/forge-agent/stages/{name}.md.
  * Base system prompt from context/forge-agent/system-prompt.md.
- * Conversation history is persisted to SQLite via cli/db.js.
+ * Conversation history is persisted via cli/conversation-store.js (SQLite by default, Redis optional).
  */
 
 import blessed from 'blessed';
@@ -167,6 +167,7 @@ export function createView({
   let modelConfig = null;
   let db = null;
   let sessionId = null;
+  let conversationStore = null;
 
   // apiMessages is the LLM conversation history (role/content pairs)
   let apiMessages = [];
@@ -225,13 +226,10 @@ export function createView({
   // ── Session persistence ──────────────────────────────────────────────────
 
   function persistMessage(role, content) {
-    if (!db || !sessionId) return;
-    if (!db._insertMsg) return;
-    try {
-      db._insertMsg({ session_id: sessionId, stage: STAGES[currentStageIdx] || 'unknown', role, content });
-    } catch (err) {
-      process.stderr.write(`[forge-agent] DB write failed: ${err.message}\n`);
-    }
+    if (!conversationStore || !sessionId) return;
+    conversationStore
+      .persistMessage(sessionId, STAGES[currentStageIdx] || 'unknown', role, content)
+      .catch((err) => process.stderr.write(`[forge-agent] store write failed: ${err.message}\n`));
   }
 
   // ── Core LLM step ────────────────────────────────────────────────────────
@@ -391,24 +389,30 @@ export function createView({
         return;
       }
 
-      // Load DB
+      // Load DB + conversation store
       let dbMod;
       try {
         dbMod = await import('../db.js');
         const dbPath = resolve(process.cwd(), config?.dbPath || 'forge.db');
         db = dbMod.getDb(dbPath);
-        // Attach the insertConversationMessage helper directly to db for persistMessage
-        db._insertMsg = (row) => dbMod.insertConversationMessage(db, row);
       } catch (err) {
         appendSystem(`DB init failed (non-fatal): ${err.message}`);
         dbMod = null;
       }
 
+      try {
+        const { makeConversationStore } = await import('../conversation-store.js');
+        conversationStore = makeConversationStore(config, db);
+      } catch (err) {
+        appendSystem(`Conversation store init failed (non-fatal): ${err.message}`);
+        conversationStore = null;
+      }
+
       // Check for incomplete sessions
-      if (db && dbMod) {
+      if (conversationStore) {
         let incompleteSessions = [];
         try {
-          incompleteSessions = dbMod.getIncompleteSessions(db);
+          incompleteSessions = await conversationStore.getIncompleteSessions();
         } catch (_) { /* ignore */ }
 
         if (incompleteSessions.length > 0) {
@@ -416,7 +420,7 @@ export function createView({
           if (resumeId) {
             // Restore session
             sessionId = resumeId;
-            const history = dbMod.getConversationHistory(db, sessionId);
+            const history = await conversationStore.getHistory(sessionId);
 
             // Find the last stage used
             const lastRow = [...history].reverse().find((r) => r.stage);
@@ -446,8 +450,8 @@ export function createView({
       }
 
       // Start fresh session
-      if (dbMod) {
-        sessionId = dbMod.createSession();
+      if (conversationStore) {
+        sessionId = conversationStore.createSession();
       }
 
       updatePhaseBar();

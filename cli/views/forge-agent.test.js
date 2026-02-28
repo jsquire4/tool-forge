@@ -28,7 +28,7 @@ vi.mock('blessed', () => {
     default: {
       box: vi.fn(() => makeWidget({ wantsBackConfirm: false })),
       log: vi.fn(() => makeWidget()),
-      textbox: vi.fn(() => makeWidget()),
+      textbox: vi.fn(() => makeWidget({ readInput: vi.fn(), cancel: vi.fn() })),
       question: vi.fn(() => ({ ...makeWidget(), ask: vi.fn() })),
     }
   };
@@ -181,9 +181,9 @@ describe('createView export contract', () => {
     expect(ctx.openPopup).not.toHaveBeenCalled();
   });
 
-  it('wantsBackConfirm is set to true on the container', () => {
+  it('does not set wantsBackConfirm — escape exits immediately', () => {
     const ctx = makeViewContext();
     const view = createView(ctx);
-    expect(view.wantsBackConfirm).toBe(true);
+    expect(view.wantsBackConfirm).toBeFalsy();
   });
 });

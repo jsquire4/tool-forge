@@ -94,8 +94,11 @@ function parseOpenApiPaths(spec) {
  * @param {string} url
  * @returns {Promise<ApiEndpoint[]>}
  */
-async function loadFromOpenApiUrl(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+async function loadFromOpenApiUrl(url, headers = {}) {
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(10000),
+    headers,
+  });
   if (!res.ok) throw new Error(`OpenAPI fetch failed: ${res.status} ${url}`);
   const spec = await res.json();
   return parseOpenApiPaths(spec);
@@ -236,7 +239,7 @@ export async function loadApis(config) {
   if (discovery?.type === 'openapi') {
     if (discovery.url) {
       try {
-        const fromUrl = await loadFromOpenApiUrl(discovery.url);
+        const fromUrl = await loadFromOpenApiUrl(discovery.url, discovery.headers);
         endpoints.push(...fromUrl);
       } catch (err) {
         console.error(`OpenAPI URL failed: ${err.message}`);

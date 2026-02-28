@@ -60,6 +60,9 @@ export async function runTui(config) {
   screen.append(footerRule);
   screen.append(footer);
 
+  // Chrome elements that should never be destroyed during view transitions.
+  const chromeElements = new Set([header, headerRule, content, footerRule, footer]);
+
   // ── View management ───────────────────────────────────────────────────────
   let currentViewName = 'main-menu';
   let currentView = null;
@@ -109,7 +112,25 @@ export async function runTui(config) {
     return moduleCache[name];
   }
 
+  // ── Auto-refresh timer ────────────────────────────────────────────────────
+  const VIEW_REFRESH_MS = 100;
+  let refreshTimer = null;
+
+  function scheduleViewRefresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      if (popupDepth === 0 && currentView?.refresh) {
+        try { await currentView.refresh(); } catch (_) { /* swallow */ }
+      }
+      scheduleViewRefresh();
+    }, VIEW_REFRESH_MS);
+    refreshTimer.unref?.();
+  }
+
   async function showView(name) {
+    // 0. Stop the auto-refresh timer for the outgoing view.
+    clearTimeout(refreshTimer);
+
     // 1. Unregister all view-local key bindings from the outgoing view.
     for (const { keys, fn } of viewKeys) {
       screen.unkey(keys, fn);
@@ -125,6 +146,13 @@ export async function runTui(config) {
       currentView = null;
     }
 
+    // 3b. Destroy any orphaned overlays (popups parented directly to screen).
+    for (const child of [...screen.children]) {
+      if (!chromeElements.has(child)) {
+        try { child.destroy(); } catch (_) { /* ignore */ }
+      }
+    }
+
     currentViewName = name;
 
     // 4. Create a fresh view instance.
@@ -136,12 +164,15 @@ export async function runTui(config) {
     currentView = viewBox;
     content.append(viewBox);
 
-    // 4. Trigger the view's initial data load if it has one.
+    // 5. Trigger the view's initial data load if it has one.
     if (typeof viewBox.refresh === 'function') {
       await viewBox.refresh();
     }
 
     screen.render();
+
+    // 6. Start auto-refresh cycle for this view.
+    scheduleViewRefresh();
   }
 
   function navigate(viewName) {
@@ -178,7 +209,6 @@ export async function runTui(config) {
 
   screen.key(['b', 'escape'], () => {
     if (popupDepth > 0) return; // a popup is open — let it handle the key
-    if (currentView?.wantsBackConfirm) return; // let view handle it via screenKey
     if (currentViewName !== 'main-menu') navigate('main-menu');
   });
 
@@ -189,6 +219,7 @@ export async function runTui(config) {
   });
 
   function cleanup() {
+    clearTimeout(refreshTimer);
     clearInterval(headerTimer);
     try { screen.destroy(); } catch (_) {}
     process.exit(0);

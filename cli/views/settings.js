@@ -129,23 +129,36 @@ export function createView({ screen, content, config, navigate, setFooter, scree
 
   setFooter(' {bold}↑↓{/bold} navigate  {bold}Enter{/bold} select section  {bold}r{/bold} refresh  {bold}b{/bold} back');
 
+  function afterPopupClose() {
+    list.refresh();
+    list.focus();
+    screen.render();
+  }
+
   list.on('select', (item, index) => {
     switch (index) {
-      case 0: showModelSelector(screen, config, openPopup, closePopup, 'generation'); break;
-      case 1: showModelSelector(screen, config, openPopup, closePopup, 'eval'); break;
-      case 2: showModelSelector(screen, config, openPopup, closePopup, 'verifier'); break;
-      case 3: showModelSelector(screen, config, openPopup, closePopup, 'secondary'); break;
-      case 4: showPromptEditor(screen, config, 'agent', openPopup, closePopup); break;
-      case 5: showPromptEditor(screen, config, 'skill', openPopup, closePopup); break;
-      case 6: showApiSourceEditor(screen, config, openPopup, closePopup); break;
-      case 7: showEnvManager(screen, config, openPopup, closePopup); break;
-      case 8: showModelMatrixEditor(screen, config, openPopup, closePopup, list.refresh); break;
+      case 0: showModelSelector(screen, config, openPopup, closePopup, 'generation', afterPopupClose); break;
+      case 1: showModelSelector(screen, config, openPopup, closePopup, 'eval', afterPopupClose); break;
+      case 2: showModelSelector(screen, config, openPopup, closePopup, 'verifier', afterPopupClose); break;
+      case 3: showModelSelector(screen, config, openPopup, closePopup, 'secondary', afterPopupClose); break;
+      case 4: showPromptEditor(screen, config, 'agent', openPopup, closePopup, afterPopupClose); break;
+      case 5: showPromptEditor(screen, config, 'skill', openPopup, closePopup, afterPopupClose); break;
+      case 6: showApiSourceEditor(screen, config, openPopup, closePopup, afterPopupClose); break;
+      case 7: showEnvManager(screen, config, openPopup, closePopup, afterPopupClose); break;
+      case 8: showModelMatrixEditor(screen, config, openPopup, closePopup, afterPopupClose); break;
     }
   });
+
+  let lastSettingsJson = '';
 
   list.refresh = () => {
     const cfg = loadConfig();
     const envMap = loadEnv();
+
+    // Quick change detection — skip render if nothing changed
+    const snapshot = JSON.stringify({ cfg, envKeys: Object.keys(envMap) });
+    if (snapshot === lastSettingsJson) return;
+    lastSettingsJson = snapshot;
     const envCount = Object.keys(envMap).length;
 
     const systemPromptStatus = cfg.systemPromptPath
@@ -213,7 +226,7 @@ export function createView({ screen, content, config, navigate, setFooter, scree
   return list;
 }
 
-function showModelSelector(screen, config, openPopup, closePopup, role = 'generation') {
+function showModelSelector(screen, config, openPopup, closePopup, role = 'generation', onClose) {
   const cfg = loadConfig();
   const current = (cfg.models?.[role] || (role === 'generation' ? cfg.model : null)) || '';
   const envMap = loadEnv();
@@ -293,35 +306,35 @@ function showModelSelector(screen, config, openPopup, closePopup, role = 'genera
         if (!err && val && val.trim()) {
           cfg.models = cfg.models || {};
           cfg.models[role] = val.trim();
-          try { saveConfig(cfg); } catch (_) { screen.render(); return; }
+          try { saveConfig(cfg); } catch (_) { onClose?.(); return; }
           if (!config.models) config.models = {};
           config.models[role] = val.trim();
           if (role === 'generation') config.model = val.trim();
         }
-        screen.render();
+        onClose?.();
       });
       return;
     }
     cfg.models = cfg.models || {};
     cfg.models[role] = val;
-    try { saveConfig(cfg); } catch (_) { screen.render(); return; }
+    try { saveConfig(cfg); } catch (_) { onClose?.(); return; }
     if (!config.models) config.models = {};
     config.models[role] = val;
     // Backwards compat: also update config.model for generation role
     if (role === 'generation') config.model = val;
     closePopup?.();
     popup.destroy();
-    screen.render();
+    onClose?.();
   }
 
   openPopup?.();
   list.on('select', (item, idx) => applySelection(idx));
-  list.key(['escape', 'b'], () => { closePopup?.(); popup.destroy(); screen.render(); });
+  list.key(['escape', 'b'], () => { closePopup?.(); popup.destroy(); onClose?.(); });
   list.focus();
   screen.render();
 }
 
-function showPromptEditor(screen, config, type, openPopup, closePopup) {
+function showPromptEditor(screen, config, type, openPopup, closePopup, onClose) {
   const cfg = loadConfig();
   let filePath, label;
 
@@ -354,7 +367,6 @@ function showPromptEditor(screen, config, type, openPopup, closePopup) {
     scrollable: true,
     alwaysScroll: true,
     keys: true,
-    vi: true,
     content,
     scrollbar: { ch: '│', style: { fg: 'white' } }
   });
@@ -402,7 +414,7 @@ function showPromptEditor(screen, config, type, openPopup, closePopup) {
     prompt.input('Enter path to system prompt file:', cfg.systemPromptPath || '', (err, val) => {
       if (!err && val) {
         cfg.systemPromptPath = val;
-        try { saveConfig(cfg); } catch (_) { screen.render(); return; }
+        try { saveConfig(cfg); } catch (_) { box.focus(); screen.render(); return; }
         config.systemPromptPath = val;
         // Reload the file content in the box
         const newPath = resolve(PROJECT_ROOT, val);
@@ -412,9 +424,11 @@ function showPromptEditor(screen, config, type, openPopup, closePopup) {
         } else {
           newContent = '(file not found: ' + val + ')';
         }
+        filePath = newPath;
         box.setContent(newContent);
-        screen.render();
       }
+      box.focus();
+      screen.render();
     });
   });
 
@@ -422,14 +436,14 @@ function showPromptEditor(screen, config, type, openPopup, closePopup) {
     closePopup?.();
     box.destroy();
     helpBar.destroy();
-    screen.render();
+    onClose?.();
   });
 
   box.focus();
   screen.render();
 }
 
-function showApiSourceEditor(screen, config, openPopup, closePopup) {
+function showApiSourceEditor(screen, config, openPopup, closePopup, onClose) {
   const cfg = loadConfig();
   const api = cfg.api || {};
 
@@ -488,7 +502,7 @@ function showApiSourceEditor(screen, config, openPopup, closePopup) {
   function doClose() {
     closePopup?.();
     box.destroy();
-    screen.render();
+    onClose?.();
   }
 
   saveBtn.on('press', () => {
@@ -531,7 +545,7 @@ function showApiSourceEditor(screen, config, openPopup, closePopup) {
   screen.render();
 }
 
-function showModelMatrixEditor(screen, config, openPopup, closePopup, onSave) {
+function showModelMatrixEditor(screen, config, openPopup, closePopup, onClose) {
   const cfg = loadConfig();
   let matrix = [...(cfg.modelMatrix || [])];
 
@@ -643,18 +657,17 @@ function showModelMatrixEditor(screen, config, openPopup, closePopup, onSave) {
     setTimeout(() => {
       closePopup?.();
       container.destroy();
-      screen.render();
-      onSave?.();
+      onClose?.();
     }, 600);
   });
 
   openPopup?.();
-  container.key(['escape', 'b'], () => { closePopup?.(); container.destroy(); screen.render(); });
+  container.key(['escape', 'b'], () => { closePopup?.(); container.destroy(); onClose?.(); });
   modelList.focus();
   screen.render();
 }
 
-function showEnvManager(screen, config, openPopup, closePopup) {
+function showEnvManager(screen, config, openPopup, closePopup, onClose) {
   let envMap = loadEnv();
   let unsaved = false;
 
@@ -801,33 +814,10 @@ function showEnvManager(screen, config, openPopup, closePopup) {
   openPopup?.();
 
   function closeEnvManager() {
-    if (unsaved) {
-      const confirm = blessed.question({
-        parent: screen,
-        border: 'line',
-        height: 'shrink',
-        width: 'half',
-        top: 'center',
-        left: 'center',
-        label: ' Discard Changes? ',
-        tags: true,
-        keys: true
-      });
-      confirm.ask('Discard unsaved changes? (y/n)', (err, answer) => {
-        confirm.destroy();
-        if (!err && /^y/i.test(answer)) {
-          closePopup?.();
-          container.destroy();
-          helpBar.destroy();
-          screen.render();
-        }
-      });
-    } else {
-      closePopup?.();
-      container.destroy();
-      helpBar.destroy();
-      screen.render();
-    }
+    closePopup?.();
+    container.destroy();
+    helpBar.destroy();
+    onClose?.();
   }
 
   container.key(['escape', 'b'], closeEnvManager);

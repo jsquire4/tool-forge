@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.3] — 2026-03-01
+
+### Added
+
+- **`PostgresEvalStore.listRuns(limit, offset)`** — paginated flat list of all eval runs across all tools, newest first; completes the read API alongside `getEvalSummary()` and `getPerToolRunHistory()`
+- **`customRoutes` option in `createSidecar()` and `createSidecarRouter()`** — async `(req, res, ctx) => boolean` hook injected before the built-in 404 fallback; return `true` if handled, `false` to fall through; eliminates the need for consumers to rewire the server's request listener stack
+
+---
+
 ## [0.4.2] — 2026-03-01
 
 ### Added
@@ -148,6 +157,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **TUI** (`lib/index.js`) — blessed-based terminal interface with main menu, tools & evals view, model comparison, drift monitor, forge workflow, onboarding, and settings screens
 - **HTTP sidecar endpoints**: `POST /agent-api/chat` (SSE), `POST /agent-api/chat-sync`, `POST /agent-api/chat/resume`, `GET/PUT /agent-api/user/preferences`, `GET /agent-api/conversations`, `GET /agent-api/tools`, `PUT /forge-admin/config/:section`, `GET/POST/PUT/DELETE /forge-admin/agents*`
 
+[0.4.3]: https://github.com/jsquire4/agent-tool-forge/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jsquire4/agent-tool-forge/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jsquire4/agent-tool-forge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.3.0...v0.4.0

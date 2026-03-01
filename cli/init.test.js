@@ -185,6 +185,22 @@ describe('init — unit helpers', () => {
     it('throws on invalid URL format', () => {
       expect(() => assertSafeUrl('not-a-url')).toThrow(/Invalid URL/);
     });
+
+    it('blocks IPv6 loopback ::1 (SSRF)', () => {
+      expect(() => assertSafeUrl('http://[::1]/')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks IPv6 ULA fc00:: range (SSRF)', () => {
+      expect(() => assertSafeUrl('http://[fc00::1]/')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks IPv6 ULA fd:: range (SSRF)', () => {
+      expect(() => assertSafeUrl('http://[fd12:3456::1]/')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks IPv6 link-local fe80:: range (SSRF)', () => {
+      expect(() => assertSafeUrl('http://[fe80::1]/')).toThrow(/Private|loopback/i);
+    });
   });
 
   describe('writeWidgetHtml', () => {

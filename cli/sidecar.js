@@ -109,19 +109,32 @@ export async function createSidecar(config = {}, options = {}) {
         res();
       };
       server.close(() => finish());
-      // Force-exit after 2s if connections linger — do NOT call teardown again
-      // here to avoid double-close of Redis/Postgres/SQLite (M2).
-      setTimeout(() => {
-        if (!resolved) { resolved = true; process.exit(0); }
+      // Force-resolve after 2s if connections linger — do NOT call process.exit()
+      // in a library module as it would kill the host application (M2).
+      const t = setTimeout(() => {
+        if (!resolved) {
+          console.error('[forge-sidecar] close() timed out after 2s — forcing resolve');
+          resolved = true;
+          res();
+        }
       }, 2000);
+      // Ensure the timeout doesn't keep the event loop alive if finish() runs first
+      if (t.unref) t.unref();
     });
   }
 
   // Optionally start listening
   if (autoListen) {
     await new Promise((res, rej) => {
-      server.on('error', rej);
-      server.listen(port, host, () => res());
+      // Use once() so the error listener is removed after firing and doesn't
+      // become a ghost listener that fires on unrelated future errors.
+      server.once('error', rej);
+      server.listen(port, host, () => {
+        // Remove the one-time error listener if listen succeeded, so it doesn't
+        // linger as a ghost listener on the now-live server.
+        server.removeListener('error', rej);
+        res();
+      });
     });
   }
 

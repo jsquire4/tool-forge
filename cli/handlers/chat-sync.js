@@ -18,27 +18,7 @@
  */
 
 import { reactLoop } from '../react-engine.js';
-import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
-
-/**
- * Extract JWT token from header or query param.
- * @param {import('http').IncomingMessage} req
- * @returns {string|null}
- */
-function extractJwt(req) {
-  const authHeader = req.headers?.authorization;
-  if (authHeader?.startsWith('Bearer ')) {
-    const hdr = authHeader.slice(7);
-    if (hdr) return hdr;
-  }
-  if (req.url) {
-    try {
-      const url = new URL(req.url, 'http://localhost');
-      return url.searchParams.get('token') || null;
-    } catch { /* malformed URL */ }
-  }
-  return null;
-}
+import { readBody, sendJson, loadPromotedTools, extractJwt } from '../http-utils.js';
 
 /**
  * @param {import('http').IncomingMessage} req

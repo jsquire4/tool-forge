@@ -338,6 +338,11 @@ describe('reactLoop', () => {
     expect(assistantMsg.role).toBe('assistant');
     expect(Array.isArray(assistantMsg.tool_calls)).toBe(true);
     expect(assistantMsg.content).toBeNull();
+    expect(assistantMsg.tool_calls[0].type).toBe('function');
+    expect(assistantMsg.tool_calls[0].function.name).toBe('search');
+    expect(typeof assistantMsg.tool_calls[0].function.arguments).toBe('string');
+    const args = JSON.parse(assistantMsg.tool_calls[0].function.arguments);
+    expect(args).toEqual({ query: 'hello' });
 
     // OpenAI tool result should be a separate message with role: 'tool'
     expect(toolMsg.role).toBe('tool');

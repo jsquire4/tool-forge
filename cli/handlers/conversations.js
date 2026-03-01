@@ -25,6 +25,11 @@ export async function handleConversations(req, res, ctx) {
 
   const userId = authResult.userId;
 
+  if (!userId) {
+    sendJson(res, 401, { error: 'Token has no user identity claim' });
+    return;
+  }
+
   const url = new URL(req.url, 'http://localhost');
   const segments = url.pathname.split('/').filter(Boolean);
   // segments: ['agent-api', 'conversations', sessionId?]
@@ -66,11 +71,16 @@ export async function handleConversations(req, res, ctx) {
   // DELETE /agent-api/conversations/:sessionId — delete session (ownership check)
   if (req.method === 'DELETE' && sessionId) {
     try {
-      const deleted = await conversationStore.deleteSession(sessionId, userId);
-      if (!deleted) {
-        sendJson(res, 403, { error: 'Forbidden or session not found' });
+      const sessionUserId = await conversationStore.getSessionUserId(sessionId);
+      if (sessionUserId === undefined) {
+        sendJson(res, 404, { error: 'Session not found' });
         return;
       }
+      if (sessionUserId !== userId) {
+        sendJson(res, 403, { error: 'Forbidden' });
+        return;
+      }
+      await conversationStore.deleteSession(sessionId, userId);
       sendJson(res, 200, { deleted: true });
     } catch (err) {
       sendJson(res, 500, { error: `Failed to delete session: ${err.message}` });

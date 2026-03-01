@@ -112,7 +112,7 @@ export class SqliteConversationStore {
 
   async getSessionUserId(sessionId) {
     const row = this._db.prepare(
-      'SELECT user_id FROM conversations WHERE session_id = ? LIMIT 1'
+      'SELECT user_id FROM conversations WHERE session_id = ? ORDER BY created_at ASC LIMIT 1'
     ).get(sessionId);
     if (!row) return undefined;
     return row.user_id ?? null;
@@ -226,16 +226,27 @@ export class RedisConversationStore {
   async listSessions(userId) {
     const client = await this._connect();
     const sessionIds = await client.sMembers(ACTIVE_SET_KEY);
-    const sessions = [];
-    for (const sessionId of sessionIds) {
-      const firstMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, 0);
-      if (!firstMsg) continue;
+
+    const sessionData = await Promise.all(sessionIds.map(async (sessionId) => {
+      const [firstMsgRaw, lastMsgRaw] = await Promise.all([
+        client.lIndex(`forge:conv:${sessionId}:msgs`, 0),
+        client.lIndex(`forge:conv:${sessionId}:msgs`, -1)
+      ]);
+      return { sessionId, firstMsgRaw, lastMsgRaw };
+    }));
+
+    const result = [];
+    for (const { sessionId, firstMsgRaw, lastMsgRaw } of sessionData) {
+      if (!firstMsgRaw) {
+        // stale entry — clean it up from the active set
+        await client.sRem(ACTIVE_SET_KEY, sessionId);
+        continue;
+      }
       try {
-        const msg = JSON.parse(firstMsg);
+        const msg = JSON.parse(firstMsgRaw);
         if (msg.user_id !== userId) continue;
-        const lastMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, -1);
-        const last = lastMsg ? JSON.parse(lastMsg) : msg;
-        sessions.push({
+        const last = lastMsgRaw ? JSON.parse(lastMsgRaw) : msg;
+        result.push({
           sessionId,
           agentId: msg.agent_id ?? null,
           userId: msg.user_id ?? null,
@@ -244,7 +255,7 @@ export class RedisConversationStore {
         });
       } catch { /* skip malformed */ }
     }
-    return sessions.sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
+    return result.sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
   }
 
   async deleteSession(sessionId, userId) {

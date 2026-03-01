@@ -159,7 +159,7 @@ export async function handleAgents(req, res, ctx) {
 function validateAgentBody(body, isCreate) {
   if (isCreate) {
     if (!body.id || typeof body.id !== 'string' || !AGENT_ID_RE.test(body.id)) {
-      return 'id is required and must match /^[a-z0-9_-]+$/';
+      return 'id is required and must match /^[a-z0-9_-]{1,64}$/';
     }
     if (!body.displayName || typeof body.displayName !== 'string') {
       return 'displayName is required';
@@ -223,6 +223,7 @@ function rowToBody(row) {
     maxTurns: row.max_turns,
     maxTokens: row.max_tokens,
     isDefault: !!row.is_default,
-    enabled: !!row.enabled
+    enabled: !!row.enabled,
+    seeded_from_config: Boolean(row.seeded_from_config)
   };
 }

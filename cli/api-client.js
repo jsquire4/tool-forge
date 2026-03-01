@@ -602,7 +602,7 @@ export async function* parseAnthropicStream(stream) {
     }
   }
 
-  const fullText = textBlocks.join('\n');
+  const fullText = textBlocks.join('');
   const toolCalls = toolCallBlocks.map(tc => {
     let input = {};
     if (tc.inputFragments.length > 0) {

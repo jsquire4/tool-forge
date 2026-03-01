@@ -268,3 +268,14 @@ describe('ForgeChat constructor state', () => {
     expect(inst._pendingTheme).toBeNull();
   });
 });
+
+// ── attributeChangedCallback token handling ───────────────────────────────────
+
+describe('ForgeChat.attributeChangedCallback token handling', () => {
+  it('attributeChangedCallback: does not overwrite _token when newVal is null', () => {
+    const el = new ForgeChatClass();
+    el._token = 'my-token';
+    el.attributeChangedCallback('token', 'my-token', null);
+    expect(el._token).toBe('my-token');
+  });
+});

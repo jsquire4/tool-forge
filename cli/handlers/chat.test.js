@@ -4,6 +4,7 @@ import { makePromptStore } from '../prompt-store.js';
 import { makePreferenceStore } from '../preference-store.js';
 import { SqliteConversationStore } from '../conversation-store.js';
 import { createAuth } from '../auth.js';
+import { HitlEngine } from '../hitl-engine.js';
 import { VerifierRunner } from '../verifier-runner.js';
 import { upsertVerifier, upsertVerifierBinding, upsertToolRegistry } from '../db.js';
 import { createHmac } from 'crypto';
@@ -238,12 +239,15 @@ describe('handleChat', () => {
       upsertVerifierBinding(db, { verifier_name: 'block-check', tool_name: 'block_tool' });
 
       const verifierRunner = new VerifierRunner(db);
-      const ctx = makeCtx(db, { verifierRunner });
+      // hitlEngine required so the hitl event goes through pause() and produces event: hitl
+      const hitlEngine = new HitlEngine({ db });
+      const ctx = makeCtx(db, { verifierRunner, hitlEngine });
 
       // Mock reactLoop to emit hitl from verifier block
       reactLoop.mockReturnValue((async function* () {
         yield { type: 'tool_call', tool: 'block_tool', args: {}, id: 'tc-2' };
-        yield { type: 'hitl', tool: 'block_tool', message: 'Verifier blocked tool result', verifier: 'block-check' };
+        yield { type: 'hitl', tool: 'block_tool', message: 'Verifier blocked tool result', verifier: 'block-check',
+          conversationMessages: [], pendingToolCalls: [], turnIndex: 0, args: {} };
       })());
 
       await handleChat(makeReq({ message: 'do something' }, token), res, ctx);

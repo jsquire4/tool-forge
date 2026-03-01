@@ -47,15 +47,15 @@ export async function handleChatResume(req, res, ctx) {
     return;
   }
 
-  // 3. Check hitlEngine exists
-  if (!hitlEngine) {
-    sendJson(res, 501, { error: 'HITL engine not available' });
+  // 3. Check confirmed FIRST — a cancellation needs no engine at all
+  if (body.confirmed !== true) {
+    sendJson(res, 200, { message: 'Cancelled' });
     return;
   }
 
-  // 4. Check confirmed FIRST before consuming the token
-  if (body.confirmed !== true) {
-    sendJson(res, 200, { message: 'Cancelled' });
+  // 4. Check hitlEngine exists (only needed for actual resume)
+  if (!hitlEngine) {
+    sendJson(res, 501, { error: 'HITL engine not available' });
     return;
   }
 

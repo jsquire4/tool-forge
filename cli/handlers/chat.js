@@ -163,6 +163,11 @@ export async function handleChat(req, res, ctx) {
     let assistantText = '';
     for await (const event of gen) {
       // HITL fix: intercept hitl events, persist partial text, persist pause state, attach resumeToken
+      if (event.type === 'hitl' && !hitlEngine) {
+        sse.send('error', { message: 'HITL triggered but engine not available; cannot pause' });
+        sse.close();
+        return;
+      }
       if (event.type === 'hitl' && hitlEngine) {
         if (assistantText) {
           await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id, userId);

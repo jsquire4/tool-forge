@@ -57,6 +57,9 @@ async function callToolEndpoint(spec, args, config, userJwt = null) {
       }
       // silently skip invalid path param names
     } else if (mapping.query) {
+      if (!SAFE_PROP_NAME.test(mapping.query)) {
+        throw new Error(`Unsafe mapping.query key: ${mapping.query}`);
+      }
       queryParams.set(mapping.query, String(val));
     } else if (mapping.body) {
       // Validate body property name to prevent prototype pollution

@@ -200,8 +200,8 @@ export async function* reactLoop(opts) {
         content: response.text || null,
         tool_calls: toolResults.map(({ toolCall }) => ({
           id: toolCall.id,
-          name: toolCall.name,
-          input: toolCall.input
+          type: 'function',
+          function: { name: toolCall.name, arguments: JSON.stringify(toolCall.input) }
         }))
       });
       for (const { toolCall, result } of toolResults) {

@@ -99,6 +99,18 @@ describe('handleChatResume', () => {
     expect(res.body.error).toMatch(/HITL engine not available/);
   });
 
+  it('returns 200 Cancelled (not 501) when hitlEngine is null AND confirmed=false', async () => {
+    // Guard ordering bug: cancellation must short-circuit before the hitlEngine null check.
+    // A confirmed=false request has no need for the HITL engine at all.
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+    const ctx = makeCtx(db);
+    ctx.hitlEngine = null;
+    await handleChatResume(makeReq({ resumeToken: 'some-token', confirmed: false }, token), res, ctx);
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    expect(res.body.message).toBe('Cancelled');
+  });
+
   it('returns 404 for expired/invalid token when confirmed=true', async () => {
     const token = makeJwt({ sub: 'user-1' });
     const res = makeRes();

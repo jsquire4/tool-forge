@@ -51,7 +51,12 @@ class ForgeChat extends HTMLElement {
   }
 
   attributeChangedCallback(name, oldVal, newVal) {
-    if (name === 'token') this._token = newVal;
+    if (name === 'token') {
+      if (newVal !== null) {  // Only update on set, not on remove
+        this._token = newVal;
+      }
+      return;
+    }
     if (name === 'theme') this._applyTheme(newVal);
   }
 
@@ -593,6 +598,9 @@ class ForgeChat extends HTMLElement {
     const endpoint = this.getAttribute('endpoint');
     if (!endpoint || !resumeToken) return;
 
+    this._streaming = true;
+    this._abortCtrl = new AbortController();
+
     const headers = { 'Content-Type': 'application/json' };
     if (this._token) headers['Authorization'] = `Bearer ${this._token}`;
 
@@ -602,7 +610,8 @@ class ForgeChat extends HTMLElement {
       const res = await fetch(`${endpoint}/chat/resume`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ resumeToken, confirmed })
+        body: JSON.stringify({ resumeToken, confirmed }),
+        signal: this._abortCtrl.signal
       });
 
       // Read the SSE response — resumed agent continues streaming
@@ -619,6 +628,12 @@ class ForgeChat extends HTMLElement {
     } catch (err) {
       this._hideTyping();
       this.dispatchEvent(new CustomEvent('forge:error', { detail: { message: err.message } }));
+    } finally {
+      this._streaming = false;
+      if (this._pendingTheme !== null) {
+        this._applyTheme(this._pendingTheme);
+        this._pendingTheme = null;
+      }
     }
   }
 

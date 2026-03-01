@@ -47,18 +47,25 @@ export function assertSafeUrl(rawUrl) {
     throw new Error('Only http:// and https:// URLs are allowed');
   }
   const host = u.hostname.toLowerCase();
+  // URL.hostname wraps IPv6 addresses in brackets (e.g. [fc00::1]), so strip
+  // them before testing against IPv6 prefix patterns.
+  const bare = host.startsWith('[') ? host.slice(1, -1) : host;
   // Block private/loopback/link-local addresses
-  if (
+  const isPrivateIPv4 = (
     host === 'localhost' ||
     /^127\./.test(host) ||
     /^10\./.test(host) ||
     /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
     /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    host === '::1' ||
-    /^fc[0-9a-f]{2}:/i.test(host) ||
-    /^fd[0-9a-f]{2}:/i.test(host)
-  ) {
+    /^169\.254\./.test(host)
+  );
+  const isPrivateIPv6 = (
+    bare === '::1' ||
+    /^fe80:/i.test(bare) ||
+    /^fc[0-9a-f]{2,}/i.test(bare) ||
+    /^fd[0-9a-f]{2,}/i.test(bare)
+  );
+  if (isPrivateIPv4 || isPrivateIPv6) {
     throw new Error('Private, loopback, and link-local URLs are not allowed');
   }
 }

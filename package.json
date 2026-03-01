@@ -4,7 +4,12 @@
   "type": "module",
   "main": "./lib/sidecar.js",
   "types": "./lib/sidecar.d.ts",
-  "files": ["lib", "widget"],
+  "files": [
+    "lib",
+    "widget",
+    "!lib/**/*.test.js",
+    "!lib/__fixtures__"
+  ],
   "exports": {
     ".": {
       "import": "./lib/sidecar.js",
@@ -29,6 +34,38 @@
     "./config": {
       "import": "./lib/config-schema.js",
       "types": "./lib/config.d.ts"
+    },
+    "./hitl-engine": {
+      "import": "./lib/hitl-engine.js",
+      "types": "./lib/hitl-engine.d.ts"
+    },
+    "./prompt-store": {
+      "import": "./lib/prompt-store.js",
+      "types": "./lib/prompt-store.d.ts"
+    },
+    "./preference-store": {
+      "import": "./lib/preference-store.js",
+      "types": "./lib/preference-store.d.ts"
+    },
+    "./rate-limiter": {
+      "import": "./lib/rate-limiter.js",
+      "types": "./lib/rate-limiter.d.ts"
+    },
+    "./db": {
+      "import": "./lib/db.js",
+      "types": "./lib/db.d.ts"
+    },
+    "./sse": {
+      "import": "./lib/sse.js",
+      "types": "./lib/sse.d.ts"
+    },
+    "./postgres-store": {
+      "import": "./lib/postgres-store.js",
+      "types": "./lib/postgres-store.d.ts"
+    },
+    "./forge-service": {
+      "import": "./lib/forge-service.js",
+      "types": "./lib/forge-service.d.ts"
     }
   },
   "bin": {

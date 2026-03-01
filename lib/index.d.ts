@@ -11,3 +11,10 @@ export type {
   SidecarConfig, AgentConfig, RateLimitConfig, VerificationConfig,
   ConversationConfig, DatabaseConfig, AuthConfig as SidecarAuthConfig
 } from './config-schema.js';
+export type { HitlEngine, HitlEngineOptions, HitlLevel, HitlToolSpec } from './hitl-engine.js';
+export type { PromptStore, PromptVersion } from './prompt-store.js';
+export type { PreferenceStore, UserPreferences, EffectiveSettings } from './preference-store.js';
+export type { RateLimiter, RateLimitResult } from './rate-limiter.js';
+export type { PostgresStore } from './postgres-store.js';
+export type { Db } from './db.js';
+export type { SSEHandle } from './sse.js';

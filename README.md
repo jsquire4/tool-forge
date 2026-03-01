@@ -96,6 +96,49 @@ Then in any Claude Code session:
 
 ---
 
+## Optional Peer Dependencies
+
+The sidecar core requires only `better-sqlite3`. Additional backends are loaded on demand when configured — install them only if you use them:
+
+| Package | When needed |
+|---------|-------------|
+| `redis` or `ioredis` | `conversation.store: 'redis'` or `rateLimit.enabled: true` with Redis backend |
+| `pg` | `database.type: 'postgres'` — Postgres conversation store, agent registry, and preferences |
+
+```bash
+# Redis backend
+npm install ioredis          # or: npm install redis
+
+# Postgres backend
+npm install pg
+```
+
+If a required package is missing, the sidecar prints an actionable error on startup rather than crashing at import time.
+
+---
+
+## Exported Subpaths
+
+All subpaths ship with TypeScript declarations.
+
+```js
+import { createSidecar }      from 'tool-forge'               // main entry
+import { reactLoop }           from 'tool-forge/react-engine'
+import { createAuth }          from 'tool-forge/auth'
+import { makeConversationStore } from 'tool-forge/conversation-store'
+import { mergeDefaults }       from 'tool-forge/config'
+import { makeHitlEngine }      from 'tool-forge/hitl-engine'
+import { makePromptStore }     from 'tool-forge/prompt-store'
+import { makePreferenceStore } from 'tool-forge/preference-store'
+import { makeRateLimiter }     from 'tool-forge/rate-limiter'
+import { getDb }               from 'tool-forge/db'
+import { initSSE }             from 'tool-forge/sse'
+import { PostgresStore }       from 'tool-forge/postgres-store'
+import { buildSidecarContext, createSidecarRouter } from 'tool-forge/forge-service'
+```
+
+---
+
 ## Documentation
 
 | Doc | Contents |
@@ -103,10 +146,9 @@ Then in any Claude Code session:
 | [docs/tui-workflow.md](docs/tui-workflow.md) | TUI walkthrough, start to finish |
 | [docs/reference/config.md](docs/reference/config.md) | `forge.config.json` field reference |
 | [docs/reference/api.md](docs/reference/api.md) | HTTP endpoints, SSE events, HITL flow |
-| [docs/architecture.md](docs/architecture.md) | 5-layer architecture + topology patterns |
 | [docs/eval-runner-contract.md](docs/eval-runner-contract.md) | Eval file format and assertion spec |
 | [docs/API-DISCOVERY.md](docs/API-DISCOVERY.md) | API discovery TUI |
-| [docs/REAL-VS-PSEUDO.md](docs/REAL-VS-PSEUDO.md) | Which templates are runnable vs conceptual |
+| [docs/VERIFIER-FACTORY.md](docs/VERIFIER-FACTORY.md) | Verifier gap detection and stub generation |
 
 ---
 
@@ -131,15 +173,15 @@ skills/
   forge-eval/             # Golden + labeled eval generation
   forge-mcp/              # MCP server generation
   forge-verifier/         # Verifier gap detection + stub generation
-templates/                # Pseudo-code reference templates (see docs/REAL-VS-PSEUDO.md)
+templates/                # Pseudo-code reference templates
 docs/
   tui-workflow.md         # Start-to-finish TUI guide
   reference/
     config.md             # forge.config.json reference
     api.md                # HTTP + SSE reference
-  architecture.md         # 5-layer architecture guide
   eval-runner-contract.md # Eval file format spec
   API-DISCOVERY.md        # API discovery workflow
+  VERIFIER-FACTORY.md     # Verifier gap detection + stub generation
 example/
   tools/                  # Example tool files
   verification/           # Example verifiers

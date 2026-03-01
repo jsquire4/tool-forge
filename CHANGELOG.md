@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.1] — 2026-03-01
+
+### Fixed
+
+- **`bin` paths in package.json** — removed leading `./` from `forge` and `forge-service` bin entries to pass npm validation
+
+---
+
 ## [0.4.0] — 2026-03-01
 
 ### Added
@@ -120,6 +128,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **TUI** (`lib/index.js`) — blessed-based terminal interface with main menu, tools & evals view, model comparison, drift monitor, forge workflow, onboarding, and settings screens
 - **HTTP sidecar endpoints**: `POST /agent-api/chat` (SSE), `POST /agent-api/chat-sync`, `POST /agent-api/chat/resume`, `GET/PUT /agent-api/user/preferences`, `GET /agent-api/conversations`, `GET /agent-api/tools`, `PUT /forge-admin/config/:section`, `GET/POST/PUT/DELETE /forge-admin/agents*`
 
+[0.4.1]: https://github.com/jsquire4/agent-tool-forge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.1.0...v0.2.0

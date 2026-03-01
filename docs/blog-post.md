@@ -35,7 +35,7 @@ A structured dialogue enforces both: it won't let you write code until the descr
 
 ---
 
-## The 10-Phase Workflow
+## The 11-Phase Workflow
 
 Here's what happens when you run `/forge-tool` for a weather API tool:
 
@@ -169,7 +169,7 @@ Run `/forge-mcp` on an existing ToolDefinition and get a complete MCP server in 
 
 In one session with the GFAF (Ghostfolio-AgentForge) project:
 
-- **6 tools** built from scratch, each passing through all 10 phases
+- **6 tools** built from scratch, each passing through all 11 phases
 - **100+ eval cases** generated across golden and labeled tiers
 - **~2 hours** total, including the skeptic debates and spec refinements
 - **0 description reworks** after evals — the Phase 3 dialogue caught ambiguities upfront
@@ -194,18 +194,18 @@ cp -r tool-forge/skills/forge-mcp  ~/.claude/skills/
 ### Use
 
 ```
-/forge-tool    # Start the 10-phase dialogue
+/forge-tool    # Start the 11-phase dialogue
 /forge-eval    # Generate evals for an existing tool
 /forge-mcp     # Generate an MCP server from a ToolDefinition
 ```
 
 The skills are framework-agnostic. They produce code in your language, with your validation library, adapted to your test framework. The LLM IS the adapter layer — the skills describe the shape, the LLM fills in the details.
 
-### What's Not Included
+### What's Also Included
 
-- **No eval runner.** The repo ships eval case schemas and generation skills, not a runnable harness. The runner is too stack-specific. The architecture guide explains the runner contract.
-- **No CLI.** These are Claude Code skills, not command-line tools.
-- **No package manager.** Clone and copy. That's the install.
+- **Eval runner.** `node lib/index.js run --eval <path>` executes eval JSON against the live agent, checks all assertions, and stores results in SQLite. Supports `--record` / `--replay` for fixture-based testing and CI gate enforcement.
+- **TUI.** `node lib/index.js` launches a full-screen terminal UI for API discovery, tool management, eval running, and live chat.
+- **Sidecar runtime.** `import { createSidecar } from 'tool-forge'` — deploy as a microservice alongside your host app.
 
 ---
 

@@ -1,12 +1,12 @@
 ---
 name: forge-tool
-description: Build a new agent tool via structured 10-phase dialogue. Walks through requirements, challenges necessity, locks the routing contract, then generates implementation code adapted to your stack. Works with any language, any framework.
+description: Build a new agent tool via structured 11-phase dialogue (phases 0–10). Walks through requirements, challenges necessity, locks the routing contract, then generates implementation code adapted to your stack. Works with any language, any framework.
 allowed-tools: Read, Edit, Write, Grep, Glob, Bash, AskUserQuestion
 ---
 
 # Forge Tool
 
-This skill is the entry point for adding a tool to your LLM agent. It conducts a structured 10-phase dialogue to ensure every tool earns its place, then generates implementation code adapted to your stack. No TODOs. No stubs.
+This skill is the entry point for adding a tool to your LLM agent. It conducts a structured 11-phase dialogue (phases 0–10) to ensure every tool earns its place, then generates implementation code adapted to your stack. No TODOs. No stubs.
 
 **How it works:** You (Claude) are both orchestrator and developer. The user defines what to build. You challenge, refine, and build it. All code is your responsibility.
 
@@ -16,7 +16,7 @@ This skill is the entry point for adding a tool to your LLM agent. It conducts a
 
 ## Phase 0: Start Forge Dialogue
 
-> **TUI is now the primary path.** The forge service is maintained for users who prefer Claude Code orchestration, but is no longer required. To forge a tool directly in the TUI, open the terminal, run `node cli/index.js`, and select "Forge Tool" from the main menu. The TUI runs the full 10-phase dialogue with live spec preview, file generation, and eval creation — all in one place.
+> **TUI is now the primary path.** The forge service is maintained for users who prefer Claude Code orchestration, but is no longer required. To forge a tool directly in the TUI, open the terminal, run `node lib/index.js`, and select "Forge Tool" from the main menu. The TUI runs the full 11-phase dialogue with live spec preview, file generation, and eval creation — all in one place.
 
 ### Legacy: forge-service path (still supported)
 
@@ -28,7 +28,7 @@ If you prefer the two-terminal workflow with Claude Code as the orchestrator:
    - If fails: start service:
      Run: `node cli/forge-service-client.js start`
      Wait for success output (port number).
-     Confirm: "Forge service started. Open the TUI in another terminal: `node cli/index.js`"
+     Confirm: "Forge service started. Open the TUI in another terminal: `node lib/index.js`"
 
 2. **Enter watch loop:**
    ```
@@ -43,7 +43,7 @@ If you prefer the two-terminal workflow with Claude Code as the orchestrator:
          {endpoint.method} {endpoint.path} → {endpoint.name}
        ─────────────────────────────────────────────
        What would you like to forge?
-         t) Tool + tests (full 10-phase dialogue)
+         t) Tool + tests (full 11-phase dialogue)
          v) Verifier for this tool
          e) Evals only (tool already exists)
          s) Skip — remove from queue

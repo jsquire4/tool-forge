@@ -19,7 +19,7 @@ verification/index.ts  ← derives ALL_VERIFIERS from exports
 
 ## Flow
 
-1. **Gap report** — Run `node cli/index.js --verifiers` for a quick report
+1. **Gap report** — Run `node lib/index.js --verifiers` for a quick report
 2. **Or run `/forge-verifier`** in Claude for full dialogue
 3. Skill loads tools, infers output groups, loads verifiers
 4. Reports: "X tools have no verifier coverage"

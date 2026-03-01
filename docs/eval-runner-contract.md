@@ -1,6 +1,12 @@
 # Eval Runner Contract
 
-This document specifies what a conforming eval runner must do, without implementing one. Tool-Forge ships eval case JSON and generation skills — the runner is stack-specific. This contract ensures any runner can execute the eval files the skills produce.
+> **Note:** tool-forge now ships a built-in eval runner (`lib/eval-runner.js`). Run evals with:
+> ```bash
+> node lib/index.js run --eval <path/to/evals.golden.json>
+> ```
+> This document specifies the assertion contract that the built-in runner (and any external runner) must satisfy.
+
+This document specifies what a conforming eval runner must do. Tool-Forge ships eval case JSON, generation skills, and a built-in runner — this contract ensures any runner (built-in or custom) can execute the eval files the skills produce.
 
 ---
 

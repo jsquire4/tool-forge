@@ -111,19 +111,20 @@ verify(response, toolCalls, channel?) → { pass, warnings[], flags[] }
 
 Two Claude Code skills form a sequential pipeline for tool creation:
 
-#### Skill 1: /forge-tool (10 phases)
+#### Skill 1: /forge-tool (11 phases, 0–10)
 
 ```
-Phase 0: Read registry         — discover existing tools
-Phase 1: Creative exploration  — "what should this tool do?"
-Phase 2: Skeptic gate          — challenge necessity, overlap, scope
-Phase 3: Description + name    — lock the routing contract
-Phase 4: Remaining fields      — schema, category, consequence, confirmation
-Phase 5: Dependency check      — verify context provides what tool needs
-Phase 6: Full spec confirm     — user signs off before any file is written
-Phase 7: Generate all files    — tool, spec, barrel registration
-Phase 8: Run tests             — must be green before proceeding
-Phase 9: Generate evals        — hand off to /forge-eval
+Phase 0:  Start Forge Dialogue  — read registry, detect existing tools
+Phase 1:  Creative exploration  — "what should this tool do?"
+Phase 2:  Skeptic gate          — challenge necessity, overlap, scope
+Phase 3:  Description + name    — lock the routing contract
+Phase 4:  Remaining fields      — schema, category, consequence, confirmation
+Phase 5:  Dependency check      — verify context provides what tool needs
+Phase 6:  Full spec confirm     — user signs off before any file is written
+Phase 7:  Generate all files    — tool, tests, barrel registration
+Phase 8:  Run tests             — must be green before proceeding
+Phase 9:  Generate evals        — hand off to /forge-eval
+Phase 10: Report output         — summary of all files created
 ```
 
 #### Skill 2: /forge-eval (auto-invoked after Phase 9)
@@ -343,21 +344,37 @@ ToolContext {
 This example uses the Sidecar topology. Standalone and Multi-Agent follow the same core flow with different integration points.
 
 ```
-HTTP POST /chat
-  → Controller (auth, sanitize)
-    → Agent service
-      → Load user context (auth passthrough)
-      → Build system prompt (channel capabilities → format constraints)
-      → Compute auto-approve set from HITL matrix
-      → Build agent with tool registry + token callback
+POST /chat  { message, conversationId? }
+  → Auth middleware (validate JWT, extract userId from claimsPath)
+    → ReAct engine
+      → Load conversation history from persistence layer
+      → Build system prompt (tool registry → AVAILABLE TOOLS section)
+      → Compute HITL auto-approve set from level × consequence matrix
+      → Open SSE stream:
+          emit: session { conversationId, sessionId }
       → Agent loop:
-          LLM → tool call → [HITL gate] → validate → execute → record metrics → back to LLM
-          (repeat until final message or interrupt)
-      → If interrupted: store pending action → return with pendingConfirmations
-      → If complete: run verification pipeline
-      → Persist metrics (atomic transaction)
-  → Return response {message, toolCalls, warnings, flags, pendingConfirmations}
+          LLM call
+            → emit: text_delta { content } (per streaming chunk)
+            → If tool call selected:
+                emit: tool_call { tool, args, id }
+                → HITL gate check
+                    → If gated: store pause state (TTL 5 min), emit: hitl { resumeToken, ... }, end stream
+                    → If auto: mcpRouting HTTP call → host app (forward JWT)
+                        → emit: tool_result { tool, id, result, error }
+                        → record tool metrics
+                        → back to LLM with result
+          (repeat until final text response or HITL interrupt)
+      → If complete:
+          → Run verifier pipeline (ACIRU order)
+              → emit: tool_warning { ... } per verifier warning
+              → flags short-circuit response if present
+          → Persist: token usage, tool metrics, verifier results (SQLite, best-effort)
+          → emit: done { conversationId, usage: { inputTokens, outputTokens } }
+      → If error:
+          → emit: error { code, message }
 ```
+
+**Note:** Tool execution at runtime uses `mcpRouting` (HTTP call to host app). The `execute()` function in `.tool.js` files is for local testing only and is not invoked by the sidecar.
 
 ---
 

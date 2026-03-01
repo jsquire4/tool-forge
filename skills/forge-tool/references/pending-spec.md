@@ -1,6 +1,6 @@
 # Pending Tool Spec — API-Driven Tool Creation
 
-When the Forge API TUI (`cli/index.js`) selects an endpoint to turn into a tool, it writes `forge-pending-tool.json` to the project root. The forge-tool skill detects this file and uses it as the starting point, skipping creative exploration.
+When the Forge API TUI (`lib/index.js`) selects an endpoint to turn into a tool, it writes `forge-pending-tool.json` to the project root. The forge-tool skill detects this file and uses it as the starting point, skipping creative exploration.
 
 ---
 

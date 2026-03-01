@@ -1,5 +1,5 @@
 /**
- * stale_data verifier — Example verifier for the tool-forge CLI demo.
+ * stale_data verifier — Example verifier for the Agent Tool Forge CLI demo.
  * Applies to weather/forecast tools. Warns if fetchedAt is older than threshold.
  */
 

@@ -1,6 +1,6 @@
 # TUI Workflow: Start to Finish
 
-This guide walks through building, testing, and running an agent tool using the tool-forge TUI.
+This guide walks through building, testing, and running an agent tool using the Agent Tool Forge TUI.
 
 ```bash
 node lib/index.js
@@ -154,7 +154,7 @@ Gate thresholds (configured in `forge.config.json` under `gates`) emit a non-zer
 Once you have tools and passing evals, start the runtime:
 
 ```js
-import { createSidecar } from 'tool-forge'
+import { createSidecar } from 'agent-tool-forge'
 
 const { server, ctx, close } = await createSidecar(
   { auth: { mode: 'trust' } },

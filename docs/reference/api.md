@@ -1,6 +1,6 @@
 # HTTP + SSE API Reference
 
-The tool-forge sidecar exposes a small HTTP surface. All endpoints assume the sidecar is running on `http://localhost:8001` (configurable via `port` in `forge.config.json`).
+The agent-tool-forge sidecar exposes a small HTTP surface. All endpoints assume the sidecar is running on `http://localhost:8001` (configurable via `port` in `forge.config.json`).
 
 All sidecar routes are prefixed with `/agent-api/`. Versioned paths (`/agent-api/v1/*`) are normalized to `/agent-api/*` automatically, so both work identically.
 

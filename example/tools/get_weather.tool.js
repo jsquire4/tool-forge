@@ -1,5 +1,5 @@
 /**
- * get_weather — Example tool for the tool-forge CLI demo.
+ * get_weather — Example tool for the Agent Tool Forge CLI demo.
  * Shape matches what the scanner (lib/tools-scanner.js) expects.
  */
 

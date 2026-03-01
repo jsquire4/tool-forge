@@ -1,5 +1,5 @@
 {
-  "name": "tool-forge",
+  "name": "agent-tool-forge",
   "version": "0.3.0",
   "description": "Production LLM agent sidecar + Claude Code skill library for building, testing, and running tool-calling agents.",
   "keywords": [

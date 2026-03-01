@@ -1,4 +1,4 @@
-# tool-forge
+# Agent Tool Forge
 
 Production LLM agent sidecar + Claude Code skill library for building, testing, and running tool-calling agents.
 
@@ -13,11 +13,11 @@ Production LLM agent sidecar + Claude Code skill library for building, testing, 
 ### As a runtime package
 
 ```bash
-npm install tool-forge
+npm install agent-tool-forge
 ```
 
 ```js
-import { createSidecar } from 'tool-forge'
+import { createSidecar } from 'agent-tool-forge'
 
 const { server, ctx, close } = await createSidecar(
   { auth: { mode: 'trust' } },
@@ -122,7 +122,7 @@ If a required package is missing, the sidecar prints an actionable error on star
 All subpaths ship with TypeScript declarations.
 
 ```js
-import { createSidecar }      from 'tool-forge'               // main entry
+import { createSidecar }      from 'agent-tool-forge'               // main entry
 import { reactLoop }           from 'tool-forge/react-engine'
 import { createAuth }          from 'tool-forge/auth'
 import { makeConversationStore } from 'tool-forge/conversation-store'

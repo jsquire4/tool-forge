@@ -1,5 +1,5 @@
 /**
- * source_attribution verifier — Example verifier for the tool-forge CLI demo.
+ * source_attribution verifier — Example verifier for the Agent Tool Forge CLI demo.
  * Applies to all tools (wildcard group). Checks that data has a declared source.
  */
 

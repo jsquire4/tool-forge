@@ -1,6 +1,6 @@
 # Eval Runner Contract
 
-> **Note:** tool-forge now ships a built-in eval runner (`lib/eval-runner.js`). Run evals with:
+> **Note:** agent-tool-forge now ships a built-in eval runner (`lib/eval-runner.js`). Run evals with:
 > ```bash
 > node lib/index.js run --eval <path/to/evals.golden.json>
 > ```

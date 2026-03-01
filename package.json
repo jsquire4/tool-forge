@@ -2,12 +2,22 @@
   "name": "tool-forge",
   "version": "0.3.0",
   "description": "Production LLM agent sidecar + Claude Code skill library for building, testing, and running tool-calling agents.",
-  "keywords": ["llm", "agent", "mcp", "tool-calling", "react-loop", "eval", "hitl", "sidecar", "claude"],
+  "keywords": [
+    "llm",
+    "agent",
+    "mcp",
+    "tool-calling",
+    "react-loop",
+    "eval",
+    "hitl",
+    "sidecar",
+    "claude"
+  ],
   "author": "jsquire4",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jsquire4/tool-forge.git"
+    "url": "git+https://github.com/jsquire4/tool-forge.git"
   },
   "bugs": {
     "url": "https://github.com/jsquire4/tool-forge/issues"
@@ -20,7 +30,8 @@
     "lib",
     "widget",
     "!lib/**/*.test.js",
-    "!lib/__fixtures__"
+    "!lib/__fixtures__",
+    "!widget/**/*.test.js"
   ],
   "exports": {
     ".": {

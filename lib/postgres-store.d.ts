@@ -91,7 +91,7 @@ export class PostgresPromptStore {
  * preference-store.js.
  */
 export class PostgresPreferenceStore {
-  constructor(pool: object, config: object);
+  constructor(pool: object, config?: object, env?: Record<string, string>);
 
   /**
    * Return the stored preferences for a user as `{ model, hitlLevel }`,

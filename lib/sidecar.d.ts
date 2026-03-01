@@ -32,6 +32,7 @@ export interface SidecarContext {
   chatAuditStore: object | null;
   verifierStore: object | null;
   pgStore: object | null;
+  _pgPool: object | null;
   [key: string]: unknown;
 }
 

@@ -17,12 +17,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jsquire4/tool-forge.git"
+    "url": "git+https://github.com/jsquire4/agent-tool-forge.git"
   },
   "bugs": {
-    "url": "https://github.com/jsquire4/tool-forge/issues"
+    "url": "https://github.com/jsquire4/agent-tool-forge/issues"
   },
-  "homepage": "https://github.com/jsquire4/tool-forge#readme",
+  "homepage": "https://github.com/jsquire4/agent-tool-forge#readme",
   "type": "module",
   "main": "./lib/sidecar.js",
   "types": "./lib/sidecar.d.ts",

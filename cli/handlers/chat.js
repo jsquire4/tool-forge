@@ -66,18 +66,26 @@ export async function handleChat(req, res, ctx) {
   // 5. Resolve user preferences against scoped config
   const effective = preferenceStore.resolveEffective(userId, scopedConfig, env);
 
-  // 6. Get system prompt (agent → global → config → fallback)
+  // 6. Pre-validate API key before starting SSE
+  if (!effective.apiKey) {
+    sendJson(res, 500, {
+      error: `No API key configured for provider "${effective.provider}". Set the appropriate environment variable.`
+    });
+    return;
+  }
+
+  // 7. Get system prompt (agent → global → config → fallback)
   const systemPrompt = agentRegistry
     ? agentRegistry.resolveSystemPrompt(agent, promptStore, scopedConfig)
     : (promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.');
 
-  // 7. Session management
+  // 8. Session management
   let sessionId = body.sessionId;
   if (!sessionId) {
     sessionId = conversationStore.createSession();
   }
 
-  // 8. Load history
+  // 9. Load history
   const rawHistory = await conversationStore.getHistory(sessionId);
   const window = scopedConfig.conversation?.window ?? 25;
   const history = rawHistory.slice(-window).map(row => ({
@@ -89,14 +97,18 @@ export async function handleChat(req, res, ctx) {
   const messages = [...history, { role: 'user', content: body.message }];
 
   // Persist user message
-  await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
+  try {
+    await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
+  } catch (err) {
+    process.stderr.write(`[chat] Failed to persist user message: ${err.message}\n`);
+  }
 
-  // 9. Load promoted tools (with agent allowlist filtering)
+  // 10. Load promoted tools (with agent allowlist filtering)
   const allowlist = agent?.tool_allowlist ?? '*';
   const parsedAllowlist = (allowlist !== '*') ? (() => { try { const parsed = JSON.parse(allowlist); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : '*';
   const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
 
-  // 10. Start SSE stream
+  // 11. Start SSE stream
   const sse = initSSE(res);
 
   // Send session info (include agentId for client correlation)
@@ -104,7 +116,7 @@ export async function handleChat(req, res, ctx) {
   if (agent) sessionEvent.agentId = agent.agent_id;
   sse.send('session', sessionEvent);
 
-  // 11. Build per-request hooks
+  // 12. Build per-request hooks
   const { hitlEngine, verifierRunner } = ctx;
   if (verifierRunner) {
     try { await verifierRunner.loadFromDb(db); } catch { /* non-fatal */ }
@@ -133,7 +145,7 @@ export async function handleChat(req, res, ctx) {
     }
   };
 
-  // 12. Run ReAct loop
+  // 13. Run ReAct loop
   try {
     const gen = reactLoop({
       provider: effective.provider,

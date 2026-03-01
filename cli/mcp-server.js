@@ -89,7 +89,7 @@ async function callToolEndpoint(spec, args, config, userJwt = null) {
  * @param {object} config - forge.config.json contents
  * @returns {import('@modelcontextprotocol/sdk/server').Server}
  */
-export function createMcpServer(db, config) {
+export function createMcpServer(db, config, sidecarCtx = null) {
   const server = new Server(
     { name: 'forge-mcp-server', version: '1.0.0' },
     { capabilities: { tools: {} } }
@@ -194,6 +194,32 @@ export function createMcpServer(db, config) {
         content: [{ type: 'text', text: result.error }],
         isError: true
       };
+    }
+
+    // Run verifiers if sidecar context is available
+    if (sidecarCtx?.verifierRunner) {
+      try {
+        await sidecarCtx.verifierRunner.loadFromDb(db);
+        const vResult = await sidecarCtx.verifierRunner.verify(name, args, result);
+        if (vResult.outcome === 'block') {
+          sidecarCtx.verifierRunner.logResult('mcp', name, vResult);
+          return {
+            content: [{ type: 'text', text: `Tool blocked by verifier "${vResult.verifierName}": ${vResult.message}` }],
+            isError: true
+          };
+        }
+        if (vResult.outcome === 'warn') {
+          sidecarCtx.verifierRunner.logResult('mcp', name, vResult);
+          return {
+            content: [
+              { type: 'text', text: `Warning from verifier "${vResult.verifierName}": ${vResult.message}` },
+              { type: 'text', text: JSON.stringify(result.body, null, 2) }
+            ],
+            structuredContent: result.body,
+            isError: false
+          };
+        }
+      } catch { /* verifier failure is non-fatal */ }
     }
 
     return {

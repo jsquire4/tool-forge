@@ -2,9 +2,15 @@
   "name": "tool-forge",
   "version": "0.3.0",
   "type": "module",
+  "main": "./cli/sidecar.js",
+  "files": ["cli", "widget"],
   "exports": {
     ".": "./cli/sidecar.js",
-    "./sidecar": "./cli/sidecar.js"
+    "./sidecar": "./cli/sidecar.js",
+    "./auth": "./cli/auth.js",
+    "./conversation-store": "./cli/conversation-store.js",
+    "./react-engine": "./cli/react-engine.js",
+    "./config": "./cli/config-schema.js"
   },
   "bin": {
     "forge": "./cli/index.js",

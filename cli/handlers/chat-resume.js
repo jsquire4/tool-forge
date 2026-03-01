@@ -81,6 +81,15 @@ export async function handleChatResume(req, res, ctx) {
 
   const scopedConfig = agentRegistry ? agentRegistry.buildAgentConfig(config, agent) : config;
   const effective = preferenceStore.resolveEffective(userId, scopedConfig, env);
+
+  // Pre-validate API key
+  if (!effective.apiKey) {
+    sendJson(res, 500, {
+      error: `No API key configured for provider "${effective.provider}". Set the appropriate environment variable.`
+    });
+    return;
+  }
+
   const systemPrompt = agentRegistry
     ? agentRegistry.resolveSystemPrompt(agent, promptStore, scopedConfig)
     : (promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.');
@@ -144,7 +153,11 @@ export async function handleChatResume(req, res, ctx) {
       // Handle nested HITL pauses during resume — persist partial text first
       if (event.type === 'hitl' && hitlEngine) {
         if (assistantText && pausedState.sessionId) {
-          await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+          try {
+            await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+          } catch (err) {
+            process.stderr.write(`[chat-resume] Failed to persist partial assistant message: ${err.message}\n`);
+          }
         }
         const resumeToken = await hitlEngine.pause({
           sessionId: pausedState.sessionId,
@@ -168,7 +181,11 @@ export async function handleChatResume(req, res, ctx) {
       sse.send(event.type, event);
       if (event.type === 'text') assistantText += event.content;
       if (event.type === 'done' && assistantText && pausedState.sessionId) {
-        await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+        try {
+          await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+        } catch (err) {
+          process.stderr.write(`[chat-resume] Failed to persist assistant message: ${err.message}\n`);
+        }
       }
     }
   } catch (err) {

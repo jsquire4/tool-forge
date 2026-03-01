@@ -87,7 +87,15 @@ export async function handleChatSync(req, res, ctx) {
   // 5. Resolve user preferences
   const effective = preferenceStore.resolveEffective(userId, scopedConfig, env);
 
-  // 6. Get system prompt
+  // 6. Pre-validate API key
+  if (!effective.apiKey) {
+    sendJson(res, 500, {
+      error: `No API key configured for provider "${effective.provider}". Set the appropriate environment variable.`
+    });
+    return;
+  }
+
+  // 7. Get system prompt
   const systemPrompt = agentRegistry
     ? agentRegistry.resolveSystemPrompt(agent, promptStore, scopedConfig)
     : (promptStore.getActivePrompt() || config.systemPrompt || 'You are a helpful assistant.');
@@ -110,9 +118,13 @@ export async function handleChatSync(req, res, ctx) {
   const messages = [...history, { role: 'user', content: body.message }];
 
   // Persist user message
-  await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
+  try {
+    await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
+  } catch (err) {
+    process.stderr.write(`[chat-sync] Failed to persist user message: ${err.message}\n`);
+  }
 
-  // 9. Load promoted tools (with agent allowlist filtering)
+  // 10. Load promoted tools (with agent allowlist filtering)
   const allowlist = agent?.tool_allowlist ?? '*';
   const parsedAllowlist = (allowlist !== '*') ? (() => { try { const parsed = JSON.parse(allowlist); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : '*';
   const { toolRows, tools } = loadPromotedTools(db, parsedAllowlist);
@@ -219,7 +231,11 @@ export async function handleChatSync(req, res, ctx) {
 
   // Persist assistant message + respond
   if (result.message) {
-    await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id);
+    try {
+      await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id);
+    } catch (err) {
+      process.stderr.write(`[chat-sync] Failed to persist assistant message: ${err.message}\n`);
+    }
   }
   sendJson(res, 200, result);
 }

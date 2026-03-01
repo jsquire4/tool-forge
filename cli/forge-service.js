@@ -44,6 +44,8 @@ import { createDriftMonitor } from './drift-background.js';
 import { VerifierRunner } from './verifier-runner.js';
 import { makeAgentRegistry } from './agent-registry.js';
 import { handleAgents } from './handlers/agents.js';
+import { handleConversations } from './handlers/conversations.js';
+import { handleToolsList } from './handlers/tools-list.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -142,6 +144,12 @@ export function createSidecarRouter(ctx, options = {}) {
     if (sidecarPath === '/agent-api/user/preferences') {
       if (req.method === 'GET') return handleGetPreferences(req, res, ctx);
       if (req.method === 'PUT') return handlePutPreferences(req, res, ctx);
+    }
+    if (sidecarPath.startsWith('/agent-api/conversations')) {
+      return handleConversations(req, res, ctx);
+    }
+    if (sidecarPath === '/agent-api/tools' && req.method === 'GET') {
+      return handleToolsList(req, res, ctx);
     }
     if (url.pathname.startsWith('/forge-admin/agents')) {
       return handleAgents(req, res, ctx);
@@ -333,7 +341,7 @@ function createDirectServer() {
         json(res, 503, { error: 'MCP server not initialized' });
         return;
       }
-      const mcpServer = createMcpServer(mcpDb, mcpConfig);
+      const mcpServer = createMcpServer(mcpDb, mcpConfig, sidecarCtx);
       try {
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await mcpServer.connect(transport);
@@ -428,6 +436,12 @@ function createDirectServer() {
       if (sidecarPath === '/agent-api/user/preferences') {
         if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
         if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
+      }
+      if (sidecarPath.startsWith('/agent-api/conversations')) {
+        return handleConversations(req, res, sidecarCtx);
+      }
+      if (sidecarPath === '/agent-api/tools' && req.method === 'GET') {
+        return handleToolsList(req, res, sidecarCtx);
       }
       if (url.pathname.startsWith('/forge-admin/agents')) {
         return handleAgents(req, res, sidecarCtx);

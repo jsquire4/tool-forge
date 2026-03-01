@@ -75,7 +75,7 @@ export type ReactEvent =
   | ErrorEvent
   | DoneEvent;
 
-export interface ConversationMessage {
+export interface ReactMessage {
   role: 'user' | 'assistant' | 'tool';
   content: unknown;
 }
@@ -85,7 +85,7 @@ export interface ReactLoopParams {
   apiKey: string;
   model: string;
   systemPrompt: string;
-  messages: ConversationMessage[];
+  messages: ReactMessage[];
   tools?: unknown[];
   maxTurns?: number;
   maxTokens?: number;

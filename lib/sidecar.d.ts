@@ -46,7 +46,7 @@ export { createAuth } from './auth.js';
 export type { AuthResult, AuthConfig, Authenticator } from './auth.js';
 
 export { reactLoop } from './react-engine.js';
-export type { ReactEvent, ReactLoopParams, TextEvent, ToolCallEvent, HitlEvent, DoneEvent } from './react-engine.js';
+export type { ReactEvent, ReactLoopParams, TextEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent, ToolWarningEvent, HitlEvent, ErrorEvent, DoneEvent } from './react-engine.js';
 
 export { mergeDefaults, validateConfig, CONFIG_DEFAULTS } from './config-schema.js';
 export type { SidecarConfig, AgentConfig, RateLimitConfig, VerificationConfig } from './config-schema.js';

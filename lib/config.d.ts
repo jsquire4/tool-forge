@@ -37,7 +37,9 @@ export interface AgentConfig {
   toolAllowlist?: string | string[];
   maxTurns?: number;
   maxTokens?: number;
+  /** DB-only — set by agent_registry, not forge.config.json */
   isDefault?: number;
+  /** DB-only — set by agent_registry, not forge.config.json */
   enabled?: number;
 }
 

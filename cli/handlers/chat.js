@@ -159,7 +159,8 @@ export async function handleChat(req, res, ctx) {
       forgeConfig: scopedConfig,
       db,
       userJwt,
-      hooks
+      hooks,
+      stream: true
     });
 
     let assistantText = '';
@@ -191,8 +192,11 @@ export async function handleChat(req, res, ctx) {
       sse.send(event.type, event);
 
       // Accumulate assistant text for persistence
-      if (event.type === 'text') {
+      if (event.type === 'text_delta') {
         assistantText += event.content;
+      }
+      if (event.type === 'text') {
+        assistantText = event.content; // authoritative overwrite
       }
 
       // Persist on completion

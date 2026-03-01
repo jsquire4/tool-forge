@@ -370,6 +370,28 @@ class ForgeChat extends HTMLElement {
     return html;
   }
 
+  _addStreamingMessage() {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'forge-msg assistant';
+    msgDiv.setAttribute('role', 'article');
+    const container = this.shadowRoot.getElementById('messages');
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+    return msgDiv;
+  }
+
+  _updateStreamingMessage(msgDiv, text) {
+    msgDiv.textContent = text;
+    const container = this.shadowRoot.getElementById('messages');
+    container.scrollTop = container.scrollHeight;
+  }
+
+  _finalizeStreamingMessage(msgDiv, text) {
+    msgDiv.innerHTML = this._renderMarkdown(text);
+    const container = this.shadowRoot.getElementById('messages');
+    container.scrollTop = container.scrollHeight;
+  }
+
   _showTyping() {
     const el = this.shadowRoot.getElementById('typing');
     if (el) el.style.display = 'block';
@@ -425,6 +447,7 @@ class ForgeChat extends HTMLElement {
       const decoder = new TextDecoder();
       let buffer = '';
       let assistantText = '';
+      let assistantMsgDiv = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -441,11 +464,23 @@ class ForgeChat extends HTMLElement {
           } else if (line.startsWith('data: ') && eventType) {
             try {
               const data = JSON.parse(line.slice(6));
-              this._handleSSEEvent(eventType, data);
-              if (eventType === 'text') assistantText += data.content || '';
-              if (eventType === 'session') {
+
+              if (eventType === 'text_delta') {
+                assistantText += data.content || '';
+                if (!assistantMsgDiv) {
+                  this._hideTyping();
+                  assistantMsgDiv = this._addStreamingMessage();
+                }
+                this._updateStreamingMessage(assistantMsgDiv, assistantText);
+              } else if (eventType === 'text') {
+                assistantText = data.content || '';
+                if (assistantMsgDiv) {
+                  this._finalizeStreamingMessage(assistantMsgDiv, assistantText);
+                }
+              } else if (eventType === 'session') {
                 this._sessionId = data.sessionId;
-                // agentId from session event (available for event dispatch)
+              } else {
+                this._handleSSEEvent(eventType, data);
               }
             } catch { /* skip malformed */ }
             eventType = null;
@@ -455,8 +490,11 @@ class ForgeChat extends HTMLElement {
 
       this._hideTyping();
 
-      if (assistantText) {
+      // Non-streaming fallback: if no streaming div was created, render traditionally
+      if (assistantText && !assistantMsgDiv) {
         this._addMessage('assistant', assistantText);
+      }
+      if (assistantText) {
         this.dispatchEvent(new CustomEvent('forge:message', { detail: { role: 'assistant', content: assistantText } }));
       }
     } catch (err) {

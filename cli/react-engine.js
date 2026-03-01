@@ -14,11 +14,11 @@
  *   error        — unrecoverable error
  */
 
-import { llmTurn, normalizeUsage } from './api-client.js';
+import { llmTurn, llmTurnStreaming, normalizeUsage } from './api-client.js';
 import { getAllToolRegistry, insertMcpCallLog } from './db.js';
 
 /**
- * @typedef {'text'|'tool_call'|'tool_result'|'tool_warning'|'hitl'|'done'|'error'} ReactEventType
+ * @typedef {'text'|'text_delta'|'tool_call'|'tool_result'|'tool_warning'|'hitl'|'done'|'error'} ReactEventType
  * @typedef {{ type: ReactEventType, content?, tool?, args?, result?, resumeToken?, message?, usage? }} ReactEvent
  */
 
@@ -37,6 +37,7 @@ import { getAllToolRegistry, insertMcpCallLog } from './db.js';
  * @param {object}   opts.forgeConfig    — for tool routing
  * @param {Database} opts.db             — for tool registry reads + MCP log writes
  * @param {string|null} [opts.userJwt]   — forwarded to tool HTTP calls
+ * @param {boolean}  [opts.stream=false]  — enable token-level streaming
  * @param {object}   [opts.hooks]        — { shouldPause, onAfterToolCall }
  * @yields {ReactEvent}
  */
@@ -45,7 +46,7 @@ export async function* reactLoop(opts) {
     provider, apiKey, model, systemPrompt, tools, messages,
     maxTurns = 10, maxTokens = 4096,
     forgeConfig = {}, db = null, userJwt = null,
-    hooks = {}
+    hooks = {}, stream = false
   } = opts;
 
   const shouldPause = hooks.shouldPause ?? (() => ({ pause: false }));
@@ -57,13 +58,43 @@ export async function* reactLoop(opts) {
   for (let turn = 0; turn < maxTurns; turn++) {
     let response;
     try {
-      response = await llmTurn({
-        provider, apiKey, model,
-        system: systemPrompt,
-        messages: conversationMessages,
-        tools,
-        maxTokens
-      });
+      if (stream) {
+        let fullText = '';
+        const streamGen = llmTurnStreaming({
+          provider, apiKey, model,
+          system: systemPrompt,
+          messages: conversationMessages,
+          tools,
+          maxTokens
+        });
+        for await (const chunk of streamGen) {
+          if (chunk.type === 'text_delta') {
+            yield { type: 'text_delta', content: chunk.text };
+            fullText += chunk.text;
+          } else if (chunk.type === 'done') {
+            fullText = chunk.text; // authoritative
+            response = {
+              text: fullText,
+              toolCalls: chunk.toolCalls,
+              rawContent: null,
+              stopReason: chunk.stopReason,
+              usage: chunk.usage
+            };
+          }
+        }
+        if (!response) {
+          yield { type: 'error', message: 'LLM stream ended without completion' };
+          return;
+        }
+      } else {
+        response = await llmTurn({
+          provider, apiKey, model,
+          system: systemPrompt,
+          messages: conversationMessages,
+          tools,
+          maxTokens
+        });
+      }
     } catch (err) {
       yield { type: 'error', message: `LLM call failed: ${err.message}` };
       return;

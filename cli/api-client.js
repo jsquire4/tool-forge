@@ -47,21 +47,21 @@ export function httpsPost(hostname, path, headers, body, timeoutMs = 60_000) {
 /**
  * Convert a forge-format tool to Anthropic tool format.
  *
- * @param {{ name: string, description?: string, jsonSchema?: object }} t
+ * @param {{ name: string, description?: string, inputSchema?: object }} t
  * @returns {{ name: string, description: string, input_schema: object }}
  */
 export function toAnthropicTool(t) {
   return {
     name: t.name,
     description: t.description || '',
-    input_schema: t.jsonSchema || { type: 'object', properties: {} }
+    input_schema: t.inputSchema || { type: 'object', properties: {} }
   };
 }
 
 /**
  * Convert a forge-format tool to OpenAI tool format.
  *
- * @param {{ name: string, description?: string, jsonSchema?: object }} t
+ * @param {{ name: string, description?: string, inputSchema?: object }} t
  * @returns {{ type: 'function', function: { name: string, description: string, parameters: object } }}
  */
 export function toOpenAiTool(t) {
@@ -70,7 +70,7 @@ export function toOpenAiTool(t) {
     function: {
       name: t.name,
       description: t.description || '',
-      parameters: t.jsonSchema || { type: 'object', properties: {} }
+      parameters: t.inputSchema || { type: 'object', properties: {} }
     }
   };
 }
@@ -452,4 +452,337 @@ export function modelConfigForName(modelName, env) {
   const provider = detectProvider(modelName);
   const apiKey = resolveApiKey(provider, env);
   return { provider, apiKey, model: modelName };
+}
+
+// ── Streaming Transport ───────────────────────────────────────────────────
+
+/**
+ * Perform an HTTPS POST request that resolves with the raw IncomingMessage stream
+ * instead of buffering. On non-2xx, buffers the error body and throws.
+ *
+ * @param {string} hostname
+ * @param {string} path
+ * @param {object} headers
+ * @param {object} body
+ * @param {number} [timeoutMs=120000]
+ * @returns {Promise<import('http').IncomingMessage>}
+ */
+export function httpsPostStream(hostname, path, headers, body, timeoutMs = 120_000) {
+  return new Promise((res, rej) => {
+    const payload = JSON.stringify(body);
+    const req = httpsRequest(
+      {
+        hostname,
+        path,
+        method: 'POST',
+        headers: { ...headers, 'Content-Length': Buffer.byteLength(payload) }
+      },
+      (resp) => {
+        if (resp.statusCode >= 200 && resp.statusCode < 300) {
+          res(resp);
+        } else {
+          // Buffer error body and throw
+          let data = '';
+          resp.on('data', (d) => { data += d; });
+          resp.on('end', () => rej(new Error(`HTTP ${resp.statusCode}: ${data.slice(0, 300)}`)));
+        }
+      }
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('API stream timeout')));
+    req.on('error', rej);
+    req.write(payload);
+    req.end();
+  });
+}
+
+// ── SSE Frame Parser ──────────────────────────────────────────────────────
+
+/**
+ * Shared async generator that splits an IncomingMessage into SSE frames.
+ * Yields { event: string|null, data: string }.
+ *
+ * @param {import('http').IncomingMessage} stream
+ * @yields {{ event: string|null, data: string }}
+ */
+export async function* parseSSEFrames(stream) {
+  let buffer = '';
+  let currentEvent = null;
+  let dataLines = [];
+
+  for await (const chunk of stream) {
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep incomplete last line
+
+    for (const line of lines) {
+      if (line.startsWith(':')) continue; // comment
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        dataLines.push(line.slice(6));
+      } else if (line === '') {
+        // Frame separator — emit if we have data
+        if (dataLines.length > 0) {
+          yield { event: currentEvent, data: dataLines.join('\n') };
+        }
+        currentEvent = null;
+        dataLines = [];
+      }
+    }
+  }
+  // Flush any remaining frame
+  if (dataLines.length > 0) {
+    yield { event: currentEvent, data: dataLines.join('\n') };
+  }
+}
+
+// ── Anthropic Stream Parser ───────────────────────────────────────────────
+
+/**
+ * Parse an Anthropic SSE stream. Yields text_delta events and a final done event.
+ *
+ * @param {import('http').IncomingMessage} stream
+ * @yields {{ type: 'text_delta', text: string } | { type: 'done', text: string, toolCalls: Array, usage: object, stopReason: string|null }}
+ */
+export async function* parseAnthropicStream(stream) {
+  let textBlocks = [];
+  let currentTextIndex = -1;
+  const toolCallBlocks = []; // { id, name, inputFragments: [] }
+  let stopReason = null;
+  let usage = { input_tokens: 0, output_tokens: 0 };
+
+  for await (const frame of parseSSEFrames(stream)) {
+    if (frame.data === '[DONE]') break;
+
+    let parsed;
+    try { parsed = JSON.parse(frame.data); } catch { continue; }
+
+    const eventType = frame.event || parsed.type;
+
+    if (eventType === 'message_start' && parsed.message?.usage) {
+      usage.input_tokens = parsed.message.usage.input_tokens || 0;
+    }
+
+    if (eventType === 'content_block_start') {
+      const block = parsed.content_block;
+      if (block?.type === 'text') {
+        currentTextIndex = textBlocks.length;
+        textBlocks.push('');
+      } else if (block?.type === 'tool_use') {
+        toolCallBlocks.push({ id: block.id, name: block.name, inputFragments: [] });
+      }
+    }
+
+    if (eventType === 'content_block_delta') {
+      const delta = parsed.delta;
+      if (delta?.type === 'text_delta' && delta.text) {
+        if (currentTextIndex >= 0) textBlocks[currentTextIndex] += delta.text;
+        yield { type: 'text_delta', text: delta.text };
+      } else if (delta?.type === 'input_json_delta' && delta.partial_json !== undefined) {
+        const lastTool = toolCallBlocks[toolCallBlocks.length - 1];
+        if (lastTool) lastTool.inputFragments.push(delta.partial_json);
+      }
+    }
+
+    if (eventType === 'content_block_stop') {
+      // Reset current text index tracking on block end
+    }
+
+    if (eventType === 'message_delta') {
+      if (parsed.delta?.stop_reason) stopReason = parsed.delta.stop_reason;
+      if (parsed.usage?.output_tokens) usage.output_tokens = parsed.usage.output_tokens;
+    }
+
+    if (eventType === 'message_stop') {
+      break;
+    }
+  }
+
+  const fullText = textBlocks.join('\n');
+  const toolCalls = toolCallBlocks.map(tc => {
+    let input = {};
+    if (tc.inputFragments.length > 0) {
+      try { input = JSON.parse(tc.inputFragments.join('')); } catch { /* malformed */ }
+    }
+    return { id: tc.id, name: tc.name, input };
+  });
+
+  yield { type: 'done', text: fullText, toolCalls, usage, stopReason };
+}
+
+// ── OpenAI-Compatible Stream Parser ───────────────────────────────────────
+
+/**
+ * Parse an OpenAI-compatible SSE stream (OpenAI, Gemini, DeepSeek).
+ * Yields text_delta events and a final done event.
+ *
+ * @param {import('http').IncomingMessage} stream
+ * @param {string} providerName — for error messages
+ * @yields {{ type: 'text_delta', text: string } | { type: 'done', text: string, toolCalls: Array, usage: object|null, stopReason: string|null }}
+ */
+export async function* parseOpenAICompatStream(stream, providerName) {
+  let fullText = '';
+  const toolCallBuffers = {}; // keyed by index
+  let stopReason = null;
+  let usage = null;
+
+  for await (const frame of parseSSEFrames(stream)) {
+    if (frame.data.trim() === '[DONE]') break;
+
+    let parsed;
+    try { parsed = JSON.parse(frame.data); } catch { continue; }
+
+    // Usage (OpenAI sends in final chunk)
+    if (parsed.usage) usage = parsed.usage;
+
+    const choice = parsed.choices?.[0];
+    if (!choice) continue;
+
+    if (choice.finish_reason) stopReason = choice.finish_reason;
+
+    const delta = choice.delta;
+    if (!delta) continue;
+
+    // Text content
+    if (delta.content) {
+      fullText += delta.content;
+      yield { type: 'text_delta', text: delta.content };
+    }
+
+    // Tool calls — streamed incrementally by index
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        if (!toolCallBuffers[idx]) {
+          toolCallBuffers[idx] = { id: tc.id || '', name: tc.function?.name || '', argFragments: [] };
+        }
+        if (tc.id) toolCallBuffers[idx].id = tc.id;
+        if (tc.function?.name) toolCallBuffers[idx].name = tc.function.name;
+        if (tc.function?.arguments) toolCallBuffers[idx].argFragments.push(tc.function.arguments);
+      }
+    }
+  }
+
+  const toolCalls = Object.values(toolCallBuffers).map(tc => {
+    let input = {};
+    if (tc.argFragments.length > 0) {
+      try { input = JSON.parse(tc.argFragments.join('')); } catch { /* malformed */ }
+    }
+    return { id: tc.id, name: tc.name, input };
+  });
+
+  yield { type: 'done', text: fullText, toolCalls, usage, stopReason };
+}
+
+// ── Provider Stream Turn Functions ────────────────────────────────────────
+
+async function* _anthropicStreamTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs }) {
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    stream: true,
+    ...(system ? { system } : {}),
+    messages,
+    ...(tools.length ? { tools: tools.map(toAnthropicTool) } : {})
+  };
+
+  const stream = await httpsPostStream(
+    'api.anthropic.com',
+    '/v1/messages',
+    {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'x-api-key': apiKey
+    },
+    body,
+    timeoutMs
+  );
+
+  yield* parseAnthropicStream(stream);
+}
+
+async function* _openaiCompatStreamTurn(hostname, path, headers, { model, system, messages, tools, maxTokens, timeoutMs }) {
+  const msgs = system
+    ? [{ role: 'system', content: system }, ...messages]
+    : [...messages];
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    stream: true,
+    stream_options: { include_usage: true },
+    messages: msgs,
+    ...(tools.length ? { tools: tools.map(toOpenAiTool), tool_choice: 'auto' } : {})
+  };
+
+  const stream = await httpsPostStream(hostname, path, headers, body, timeoutMs);
+  yield* parseOpenAICompatStream(stream, 'openai-compat');
+}
+
+async function* _openaiStreamTurn(opts) {
+  yield* _openaiCompatStreamTurn(
+    'api.openai.com',
+    '/v1/chat/completions',
+    { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.apiKey}` },
+    opts
+  );
+}
+
+async function* _geminiStreamTurn(opts) {
+  yield* _openaiCompatStreamTurn(
+    'generativelanguage.googleapis.com',
+    '/v1beta/openai/chat/completions',
+    { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.apiKey}` },
+    opts
+  );
+}
+
+async function* _deepseekStreamTurn(opts) {
+  yield* _openaiCompatStreamTurn(
+    'api.deepseek.com',
+    '/v1/chat/completions',
+    { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.apiKey}` },
+    opts
+  );
+}
+
+// ── Unified Streaming LLM Turn ────────────────────────────────────────────
+
+/**
+ * Perform a single streaming LLM turn. Async generator that yields
+ * { type: 'text_delta', text } during the stream, and
+ * { type: 'done', text, toolCalls, usage, stopReason } at end.
+ *
+ * Same opts as llmTurn.
+ *
+ * @param {object} opts
+ * @yields {{ type: 'text_delta', text: string } | { type: 'done', text: string, toolCalls: Array, usage: object, stopReason: string|null }}
+ */
+export async function* llmTurnStreaming({
+  provider,
+  apiKey,
+  model,
+  system,
+  messages,
+  tools = [],
+  maxTokens = 4096,
+  timeoutMs = 120_000
+}) {
+  if (provider === 'anthropic') {
+    yield* _anthropicStreamTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
+    return;
+  }
+  if (provider === 'openai') {
+    yield* _openaiStreamTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
+    return;
+  }
+  if (provider === 'google') {
+    yield* _geminiStreamTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
+    return;
+  }
+  if (provider === 'deepseek') {
+    yield* _deepseekStreamTurn({ apiKey, model, system, messages, tools, maxTokens, timeoutMs });
+    return;
+  }
+  throw new Error(`llmTurnStreaming: unknown provider "${provider}". Expected 'anthropic', 'openai', 'google', or 'deepseek'.`);
 }

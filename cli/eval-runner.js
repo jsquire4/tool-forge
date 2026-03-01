@@ -147,7 +147,7 @@ function extractSchemaFromSource(source) {
 }
 
 /**
- * Load tools from the tools directory, returning objects with jsonSchema.
+ * Load tools from the tools directory, returning objects with inputSchema.
  */
 export function getToolsForEval(config) {
   const project = config?.project || {};
@@ -165,7 +165,7 @@ export function getToolsForEval(config) {
     const name = nameM?.[1] ?? file.replace(/\.tool\.(ts|js)$/, '');
     const description = descM?.[1] ?? '';
     const rawSchema = extractSchemaFromSource(source);
-    return { name, description, jsonSchema: forgeSchemaToJsonSchema(rawSchema) };
+    return { name, description, inputSchema: forgeSchemaToJsonSchema(rawSchema) };
   });
 }
 

@@ -145,7 +145,8 @@ export async function handleChatResume(req, res, ctx) {
       forgeConfig: scopedConfig,
       db,
       userJwt,
-      hooks
+      hooks,
+      stream: true
     });
 
     let assistantText = '';
@@ -179,7 +180,8 @@ export async function handleChatResume(req, res, ctx) {
       }
 
       sse.send(event.type, event);
-      if (event.type === 'text') assistantText += event.content;
+      if (event.type === 'text_delta') assistantText += event.content;
+      if (event.type === 'text') assistantText = event.content;
       if (event.type === 'done' && assistantText && pausedState.sessionId) {
         try {
           await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);

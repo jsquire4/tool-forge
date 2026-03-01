@@ -70,7 +70,7 @@ export function loadPromotedTools(db, allowlist = '*') {
       tools.push({
         name: spec.name || row.tool_name,
         description: spec.description || '',
-        jsonSchema: { type: 'object', properties, required }
+        inputSchema: { type: 'object', properties, required }
       });
     } catch { /* skip malformed specs */ }
   }

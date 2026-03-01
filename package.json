@@ -2,29 +2,48 @@
   "name": "tool-forge",
   "version": "0.3.0",
   "type": "module",
-  "main": "./cli/sidecar.js",
-  "files": ["cli", "widget"],
+  "main": "./lib/sidecar.js",
+  "types": "./lib/sidecar.d.ts",
+  "files": ["lib", "widget"],
   "exports": {
-    ".": "./cli/sidecar.js",
-    "./sidecar": "./cli/sidecar.js",
-    "./auth": "./cli/auth.js",
-    "./conversation-store": "./cli/conversation-store.js",
-    "./react-engine": "./cli/react-engine.js",
-    "./config": "./cli/config-schema.js"
+    ".": {
+      "import": "./lib/sidecar.js",
+      "types": "./lib/sidecar.d.ts"
+    },
+    "./sidecar": {
+      "import": "./lib/sidecar.js",
+      "types": "./lib/sidecar.d.ts"
+    },
+    "./auth": {
+      "import": "./lib/auth.js",
+      "types": "./lib/auth.d.ts"
+    },
+    "./conversation-store": {
+      "import": "./lib/conversation-store.js",
+      "types": "./lib/conversation-store.d.ts"
+    },
+    "./react-engine": {
+      "import": "./lib/react-engine.js",
+      "types": "./lib/react-engine.d.ts"
+    },
+    "./config": {
+      "import": "./lib/config-schema.js",
+      "types": "./lib/config.d.ts"
+    }
   },
   "bin": {
-    "forge": "./cli/index.js",
-    "forge-service": "./cli/forge-service.js"
+    "forge": "./lib/index.js",
+    "forge-service": "./lib/forge-service.js"
   },
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "start": "node cli/index.js",
-    "forge": "node cli/index.js",
-    "manual": "node cli/index.js --manual",
-    "service": "node cli/forge-service.js",
-    "sidecar": "node cli/forge-service.js --mode=sidecar",
+    "start": "node lib/index.js",
+    "forge": "node lib/index.js",
+    "manual": "node lib/index.js --manual",
+    "service": "node lib/forge-service.js",
+    "sidecar": "node lib/forge-service.js --mode=sidecar",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

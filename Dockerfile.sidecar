@@ -7,7 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # Copy application code
-COPY cli/ cli/
+COPY lib/ lib/
 COPY widget/ widget/
 
 # Expose sidecar port
@@ -17,4 +17,4 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD wget -qO- http://localhost:8001/health || exit 1
 
-CMD ["node", "cli/forge-service.js", "--mode=sidecar"]
+CMD ["node", "lib/forge-service.js", "--mode=sidecar"]

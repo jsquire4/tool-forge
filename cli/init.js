@@ -59,11 +59,13 @@ export function assertSafeUrl(rawUrl) {
     /^192\.168\./.test(host) ||
     /^169\.254\./.test(host)
   );
+  // ULA range fc00::/7 covers any address starting with fc or fd.
+  // Use bare prefix match (no digit count) so fc::1 and fd::1 are also blocked.
   const isPrivateIPv6 = (
     bare === '::1' ||
     /^fe80:/i.test(bare) ||
-    /^fc[0-9a-f]{2,}/i.test(bare) ||
-    /^fd[0-9a-f]{2,}/i.test(bare)
+    /^fc/i.test(bare) ||
+    /^fd/i.test(bare)
   );
   if (isPrivateIPv4 || isPrivateIPv6) {
     throw new Error('Private, loopback, and link-local URLs are not allowed');

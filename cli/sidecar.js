@@ -102,16 +102,18 @@ export async function createSidecar(config = {}, options = {}) {
 
     return new Promise((res) => {
       let resolved = false;
+      let t;
       const finish = async () => {
         if (resolved) return;
         resolved = true;
+        clearTimeout(t);
         await teardownConnections();
         res();
       };
       server.close(() => finish());
       // Force-resolve after 2s if connections linger — do NOT call process.exit()
       // in a library module as it would kill the host application (M2).
-      const t = setTimeout(() => {
+      t = setTimeout(() => {
         if (!resolved) {
           console.error('[forge-sidecar] close() timed out after 2s — forcing resolve');
           resolved = true;

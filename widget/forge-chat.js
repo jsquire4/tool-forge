@@ -533,7 +533,7 @@ class ForgeChat extends HTMLElement {
       this.dispatchEvent(new CustomEvent('forge:error', { detail: { message: err.message } }));
     } finally {
       this._streaming = false;
-      if (this._pendingTheme != null) {
+      if (this._pendingTheme !== null) {
         this._applyTheme(this._pendingTheme);
         this._pendingTheme = null;
       }

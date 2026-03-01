@@ -238,8 +238,8 @@ export class RedisConversationStore {
     const result = [];
     for (const { sessionId, firstMsgRaw, lastMsgRaw } of sessionData) {
       if (!firstMsgRaw) {
-        // stale entry — clean it up from the active set
-        await client.sRem(ACTIVE_SET_KEY, sessionId);
+        // stale entry — clean it up from the active set (best-effort, ignore transient errors)
+        try { await client.sRem(ACTIVE_SET_KEY, sessionId); } catch { /* ignore */ }
         continue;
       }
       try {

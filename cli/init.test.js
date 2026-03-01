@@ -201,6 +201,14 @@ describe('init — unit helpers', () => {
     it('blocks IPv6 link-local fe80:: range (SSRF)', () => {
       expect(() => assertSafeUrl('http://[fe80::1]/')).toThrow(/Private|loopback/i);
     });
+
+    it('blocks IPv6 ULA fc::1 (short form — no digit padding after fc)', () => {
+      expect(() => assertSafeUrl('http://[fc::1]/')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks IPv6 ULA fd::1 (short form — no digit padding after fd)', () => {
+      expect(() => assertSafeUrl('http://[fd::1]/')).toThrow(/Private|loopback/i);
+    });
   });
 
   describe('writeWidgetHtml', () => {

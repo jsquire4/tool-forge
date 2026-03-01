@@ -35,18 +35,12 @@ describe('dep-check', () => {
     });
 
     it('returns likelyCause: broken_package for non-MODULE_NOT_FOUND errors', async () => {
-      // Use vi.doMock to intercept import for this specific package name
-      // We simulate a package that is "found" but throws on load
-      // by wrapping checkDependency with a patched import behavior inline.
-      // Since we cannot easily intercept dynamic import() for arbitrary names,
-      // we verify the branch logic by inspecting the error classification directly.
-      const brokenErr = new Error('native addon failed to bind');
-      // err.code is undefined (not MODULE_NOT_FOUND)
-      const notInstalled =
-        brokenErr.code === 'MODULE_NOT_FOUND' ||
-        brokenErr.message?.includes('Cannot find package');
-      expect(notInstalled).toBe(false);
-      // This confirms the logic in checkDependency would set likelyCause = 'broken_package'
+      // Use a file URL to a fixture that throws a non-MODULE_NOT_FOUND error
+      const fixtureUrl = new URL('./__fixtures__/broken-pkg.js', import.meta.url).href;
+      const result = await checkDependency(fixtureUrl);
+      expect(result.available).toBe(false);
+      expect(result.likelyCause).toBe('broken_package');
+      expect(result.error).toContain('native addon');
     });
   });
 

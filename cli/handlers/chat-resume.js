@@ -49,6 +49,10 @@ export async function handleChatResume(req, res, ctx) {
 
   // 3. Check confirmed FIRST — a cancellation needs no engine at all
   if (body.confirmed !== true) {
+    // Cancellation returns 200 regardless of token validity — the end state
+    // (not resuming) is the same whether the token was valid or expired.
+    // Clients that need to distinguish "cancelled" from "token not found"
+    // should do a GET /hitl/status check before cancelling.
     sendJson(res, 200, { message: 'Cancelled' });
     return;
   }

@@ -261,6 +261,10 @@ export class RedisConversationStore {
   async deleteSession(sessionId, userId) {
     const client = await this._connect();
     // Verify ownership via first message
+    // Note: there is a TOCTOU window between the ownership lIndex check and
+    // the multi().exec() delete. In practice, message lists are append-only
+    // so the first element never changes after creation. Atomic ownership-
+    // gated delete would require a Lua EVAL script; accepted as-is.
     const firstMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, 0);
     if (!firstMsg) return false;
     try {

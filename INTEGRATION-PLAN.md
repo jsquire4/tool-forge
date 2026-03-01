@@ -1,6 +1,10 @@
 # Integration Plan: Close the E2E Eval Loop
 ## Incorporating evalkit (checks) + agent-eval-kit (fixtures, gates, comparison) into tool-forge
 
+**Sources:**
+- [evalkit](https://github.com/wkhori/evalkit) by wkhori — MIT
+- [agent-eval-kit](https://github.com/FlanaganSe/agent-eval-kit) by FlanaganSe — MIT
+
 **Date:** 2026-02-28
 **Status:** Pending approval
 
@@ -27,8 +31,9 @@ generates eval JSON; this plan is exclusively about executing that JSON.
 ### In every lifted/adapted file — top of file, before any imports:
 ```js
 /**
- * Adapted from [project name] by [Author Name]
- * Source: https://github.com/[repo]
+ * Adapted from evalkit by wkhori         (https://github.com/wkhori/evalkit)
+ *   — OR —
+ * Adapted from agent-eval-kit by FlanaganSe  (https://github.com/FlanaganSe/agent-eval-kit)
  * License: MIT
  * Original file: src/[path/to/original.ts]
  *
@@ -44,8 +49,8 @@ generates eval JSON; this plan is exclusively about executing that JSON.
 
 tool-forge's eval runner is built on work from two open-source projects:
 
-- **[evalkit](link)** by [Name] — the deterministic check system (`lib/checks/`)
-- **[agent-eval-kit](link)** by [Name] — record/replay fixtures and gate evaluation
+- **[evalkit](https://github.com/wkhori/evalkit)** by wkhori — the deterministic check system (`lib/checks/`)
+- **[agent-eval-kit](https://github.com/FlanaganSe/agent-eval-kit)** by FlanaganSe — record/replay fixtures and gate evaluation
   (`lib/fixtures/`, `lib/runner/gate.js`, `lib/comparison/`)
 
 The forge skills generate eval JSON; their execution layers make it runnable.
@@ -401,7 +406,7 @@ These are included in Track E and represent easy wins during the same integratio
 
 ## Source Files Reference
 
-### From evalkit (by [Author Name] — https://github.com/[repo])
+### From evalkit (by wkhori — https://github.com/wkhori/evalkit)
 | Original TS file | Converted to | Notes |
 |---|---|---|
 | `src/checks/types.ts` | `lib/checks/types.js` | JSDoc only, no logic |
@@ -420,7 +425,7 @@ These are included in Track E and represent easy wins during the same integratio
 | `src/runner/run-suite.ts` | (not lifted directly) | Pattern referenced in eval-runner.js update |
 | `src/runner/loader.ts` | (not lifted directly) | tool-forge evals are JSON; existing loader sufficient |
 
-### From agent-eval-kit (by [Author Name] — https://github.com/[repo])
+### From agent-eval-kit (by FlanaganSe — https://github.com/FlanaganSe/agent-eval-kit)
 | Original TS file | Converted to | Notes |
 |---|---|---|
 | `src/fixtures/fixture-store.ts` | `lib/fixtures/fixture-store.js` | Moderate; preserve sortKeysDeep |

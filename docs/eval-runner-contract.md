@@ -22,7 +22,7 @@ This document specifies what a conforming eval runner must do. Tool-Forge ships 
 The runner's job:
 1. Load an eval file (golden or labeled JSON bare array)
 2. For each case: send the message to the agent, capture the response, run assertions
-3. Store results in SQLite (`forge.db`) and print a human-readable summary
+3. Store results in SQLite (`forge.db`) — standalone CLI runner only — and print a human-readable summary
 
 ---
 
@@ -42,11 +42,27 @@ Envelope format (`{ "metadata": { ... }, "cases": [...] }`) is planned for a fut
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `stubs` | `{ [toolName]: object }` | Optional. Stub responses for each tool. Presence switches the runner from routing-only to stub-based multi-turn mode. |
+| `stubs` | `{ [toolName]: object }` | Optional. Stub responses for each tool. Presence of at least one key activates stub-based multi-turn mode; an empty `{}` stays in routing-only mode. |
 | `maxTurns` | `number` | Optional. Max iterations of the LLM loop in stub mode. Default 5. |
-| `noToolErrors` | `boolean` | See §3 noToolErrors — semantics differ between stub and routing-only modes. |
+| `noToolErrors` | `boolean` | See §2 noToolErrors — semantics differ between stub and routing-only modes. |
 
-**Stub-based multi-turn execution:** When `stubs` is present, the runner runs a full multi-turn
+Additional assertion fields supported in `expect` (all optional):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxCost` | `number` | Fails if the turn's estimated cost (USD) exceeds this value. |
+| `minToolCalls` | `number` | Minimum number of tool calls expected. |
+| `maxToolCalls` | `number` | Maximum number of tool calls expected. |
+| `jsonValid` | `boolean` | Fails if the response is not valid JSON. |
+| `schemaData` | `object` | Response object to validate against `requiredKeys` and `typeChecks`. |
+| `requiredKeys` | `string[]` | Keys that must be present in `schemaData`. Defaults to `[]`. |
+| `typeChecks` | `object` | Map of key→type string for type validation in `schemaData`. |
+| `minLength` | `number` | Minimum character length of the response. |
+| `maxLength` | `number` | Maximum character length of the response. |
+| `regexPattern` | `string` | Regex pattern the response must match. |
+| `copOutPhrases` | `string[]` | Phrases whose presence causes the response to fail the non-empty check. |
+
+**Stub-based multi-turn execution:** When `stubs` is present and non-empty, the runner runs a full multi-turn
 loop — the model calls tools, stub results are fed back, and the loop continues until the model
 produces a final text response or `maxTurns` is reached. Response assertions (`responseContains`,
 `responseNonEmpty`, etc.) are checked against the **final** LLM response, not the first-turn text.
@@ -245,47 +261,7 @@ if expect.toolsAcceptable:
   assert anyMatch
 ```
 
-### 2. toolParams (parameter-level assertions)
-
-```
-if expect.toolParams:
-  for each paramAssertion in expect.toolParams:
-    // Find the matching tool call
-    toolCall = response.toolCalls.find(tc => tc.name === paramAssertion.tool)
-    if !toolCall: skip (tool wasn't called — routing assertion already handles this)
-
-    actualValue = toolCall.params[paramAssertion.paramName]
-    resolvedExpected = paramAssertion.value
-      ? resolveToken(paramAssertion.value, seed, snapshot)
-      : null
-
-    switch paramAssertion.assertion:
-      case 'equals':
-        assert String(actualValue) === resolvedExpected
-      case 'contains':
-        assert String(actualValue).includes(resolvedExpected)
-      case 'oneOf':
-        assert resolvedExpected.includes(String(actualValue))  // value is string[]
-      case 'exists':
-        assert actualValue !== undefined
-      case 'notExists':
-        assert actualValue === undefined
-      case 'matches':
-        assert new RegExp(resolvedExpected).test(String(actualValue))
-```
-
-**Agent endpoint requirement:** The `ToolCallRecord` must include a `params` field containing the arguments the model sent to the tool:
-
-```
-ToolCallRecord {
-  name:      string
-  success:   boolean
-  durationMs: number
-  params:    Record<string, unknown>  // The arguments the model passed
-}
-```
-
-### 3. noToolErrors
+### 2. noToolErrors
 
 The semantics depend on whether the eval case uses stubs:
 
@@ -309,14 +285,14 @@ if expect.noToolErrors:
     assert tc.success === true
 ```
 
-### 4. responseNonEmpty
+### 3. responseNonEmpty
 
 ```
 if expect.responseNonEmpty:
   assert response.response.trim().length > 0
 ```
 
-### 5. responseContains
+### 4. responseContains
 
 ```
 if expect.responseContains:
@@ -326,7 +302,7 @@ if expect.responseContains:
     assert response.response.includes(resolved)  // case-sensitive
 ```
 
-### 6. responseContainsAny
+### 5. responseContainsAny
 
 ```
 if expect.responseContainsAny:
@@ -336,7 +312,7 @@ if expect.responseContainsAny:
     assert resolvedGroup.some(v => response.response.includes(v))  // case-sensitive
 ```
 
-### 7. responseNotContains
+### 6. responseNotContains
 
 ```
 if expect.responseNotContains:
@@ -346,7 +322,7 @@ if expect.responseNotContains:
     assert !response.response.includes(resolved)  // case-sensitive
 ```
 
-### 8. maxLatencyMs
+### 7. maxLatencyMs
 
 ```
 if expect.maxLatencyMs:
@@ -421,6 +397,8 @@ The programmatic runner (`runEvalSuite`) returns results in memory — no file o
   "gates": { "pass": true, "results": [...] }
 }
 ```
+
+> **Note:** In fixture replay mode (`--replay`), `p95LatencyMs` and `totalCost` reflect only cases served live (not from cache). In a full-cache run both will be `0`.
 
 ### Console Summary (CLI runner)
 

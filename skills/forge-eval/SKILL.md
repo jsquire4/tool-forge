@@ -54,7 +54,7 @@ From `/forge-tool` Phase 9 or from manual invocation:
 
 - Tool `name` (snake_case)
 - Tool `description` (follows routing contract format)
-- Tool `category` ('read' | 'write' | 'analysis')
+- Tool `category` ('read' | 'write' | 'delete' | 'side_effect')
 - Tool `schema` (field names, types, defaults, enums)
 - Tool `requiresConfirmation` (boolean)
 - **Trigger phrases** (3-5 natural language phrases that should route to this tool)
@@ -119,6 +119,9 @@ Before generating labeled evals:
   "id": "gs-get-weather-001",
   "description": "trigger phrase — direct weather question",
   "input": { "message": "What's the weather in Paris?" },
+  "stubs": {
+    "get_weather": { "city": "Paris", "temperature": 18, "units": "celsius", "condition": "partly cloudy" }
+  },
   "expect": {
     "toolsCalled": ["get_weather"],
     "noToolErrors": true,
@@ -130,6 +133,11 @@ Before generating labeled evals:
   }
 }
 ```
+
+> **`stubs` enables multi-turn mode.** The runner feeds the stub back to the model after the tool call,
+> and `responseContains` / `responseNonEmpty` are checked against the **final** LLM response — not
+> the first-turn text. Without `stubs`, the runner stops after one turn and response assertions are
+> largely meaningless (the model has no tool result to talk about yet).
 
 ---
 

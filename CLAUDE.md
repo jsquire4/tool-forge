@@ -2,7 +2,10 @@
 
 ## What This Is
 
-Tool-Forge is a collection of Claude Code skills and templates for building LLM agent tools with structured dialogue workflows. It is framework-agnostic and language-agnostic — the skills produce pseudo-code that the LLM adapts to the user's stack.
+Tool-Forge is a production LLM agent sidecar + Claude Code skill library for building, testing, and running tool-calling agents. It has two jobs:
+
+1. **Sidecar runtime** (`lib/`) — deploy alongside your app. Handles the full ReAct loop, HITL gates, verifier pipeline, eval runner, MCP server, multi-provider LLM client (Anthropic, OpenAI, Gemini, DeepSeek), auth, rate limiting, conversation persistence, drift monitoring, and observability. Entry point: `lib/sidecar.js` (library) / `lib/index.js` (TUI + CLI).
+2. **Skill library** (`skills/`) — Claude Code skills that generate tools, eval suites, verifiers, and MCP servers via structured 12-phase dialogue. Framework-agnostic and language-agnostic — the skills produce code adapted to the user's stack.
 
 ## Conventions
 
@@ -14,12 +17,13 @@ Tool-Forge is a collection of Claude Code skills and templates for building LLM 
 ## File Organization
 
 ```
+lib/             — Production sidecar runtime + TUI + CLI (real runnable Node.js)
 skills/          — Claude Code skill definitions (SKILL.md + references/)
 templates/       — Annotated pseudo-code templates with extension points
-docs/            — Architecture guide, blog post, worked examples
+docs/            — Architecture guide, worked examples, API reference
 config/          — Optional configuration templates
 example/         — Real tool + verifier files wired to the CLI demo
-lib/             — Real runnable Node.js CLI (tool gap detector, verifier TUI)
+widget/          — <forge-chat> web component (vanilla JS, zero deps)
 ```
 
 ## Editing Rules

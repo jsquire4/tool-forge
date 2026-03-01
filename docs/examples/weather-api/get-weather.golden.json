@@ -3,6 +3,12 @@
     "id": "gs-get-weather-001",
     "description": "trigger phrase — direct weather question",
     "input": { "message": "What's the weather in Paris?" },
+    "stubs": {
+      "get_weather": {
+        "city": "Paris", "temperature": 18, "units": "celsius",
+        "condition": "partly cloudy", "humidity": 62, "wind_kph": 15
+      }
+    },
     "expect": {
       "toolsCalled": ["get_weather"],
       "noToolErrors": true,
@@ -17,6 +23,12 @@
     "id": "gs-get-weather-002",
     "description": "trigger phrase — asking about temperature",
     "input": { "message": "How cold is it in Tokyo right now?" },
+    "stubs": {
+      "get_weather": {
+        "city": "Tokyo", "temperature": 8, "units": "celsius",
+        "condition": "clear", "humidity": 45, "wind_kph": 10
+      }
+    },
     "expect": {
       "toolsCalled": ["get_weather"],
       "noToolErrors": true,
@@ -31,6 +43,12 @@
     "id": "gs-get-weather-003",
     "description": "trigger phrase — general conditions",
     "input": { "message": "What are the current conditions in London?" },
+    "stubs": {
+      "get_weather": {
+        "city": "London", "temperature": 12, "units": "celsius",
+        "condition": "overcast", "humidity": 78, "wind_kph": 20
+      }
+    },
     "expect": {
       "toolsCalled": ["get_weather"],
       "noToolErrors": true,
@@ -48,6 +66,12 @@
     "id": "gs-get-weather-004",
     "description": "rephrased — casual wording",
     "input": { "message": "Is it raining in Seattle?" },
+    "stubs": {
+      "get_weather": {
+        "city": "Seattle", "temperature": 11, "units": "celsius",
+        "condition": "rainy", "humidity": 85, "wind_kph": 18
+      }
+    },
     "expect": {
       "toolsCalled": ["get_weather"],
       "noToolErrors": true,
@@ -62,6 +86,12 @@
     "id": "gs-get-weather-005",
     "description": "no raw JSON leak",
     "input": { "message": "Tell me the weather in Berlin" },
+    "stubs": {
+      "get_weather": {
+        "city": "Berlin", "temperature": 5, "units": "celsius",
+        "condition": "foggy", "humidity": 90, "wind_kph": 8
+      }
+    },
     "expect": {
       "toolsCalled": ["get_weather"],
       "noToolErrors": true,
@@ -74,6 +104,12 @@
     "id": "gs-get-weather-006",
     "description": "disambiguation — current weather not forecast",
     "input": { "message": "What's it like outside in Chicago right now?" },
+    "stubs": {
+      "get_weather": {
+        "city": "Chicago", "temperature": -2, "units": "celsius",
+        "condition": "snow flurries", "humidity": 70, "wind_kph": 30
+      }
+    },
     "expect": {
       "toolsCalled": ["get_weather"],
       "noToolErrors": true,

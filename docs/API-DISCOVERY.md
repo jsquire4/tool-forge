@@ -7,7 +7,7 @@ The Forge API TUI discovers available API endpoints, shows which ones don't have
 ## Flow
 
 ```
-1. Run: node lib/index.js  (or npm run api in cli/)
+1. Run: `node lib/index.js`
 2. TUI loads APIs (OpenAPI + manifest)
 3. TUI loads existing tools (from barrel/files)
 4. TUI shows: "APIs without tools: [list]"

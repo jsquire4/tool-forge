@@ -1,6 +1,6 @@
 /**
  * get_forecast — Example tool for the tool-forge CLI demo.
- * Shape matches what the scanner (cli/tool-scanner.js) expects.
+ * Shape matches what the scanner (lib/tools-scanner.js) expects.
  */
 
 export const getForecastTool = {

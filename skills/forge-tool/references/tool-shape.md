@@ -11,7 +11,7 @@ The universal shape for an LLM agent tool. Every tool in the registry conforms t
 | `name` | string | snake_case identifier. Verb-noun preferred: `get_holdings`, `check_wash_sale` |
 | `description` | string | **The routing contract.** See `description-contract.md` for format |
 | `schema` | Schema | Input validation schema (Zod, Pydantic, JSON Schema, etc.) |
-| `category` | `'read' \| 'write' \| 'analysis'` | Mutation classification |
+| `category` | `'read' \| 'write' \| 'delete' \| 'side_effect'` | Mutation classification |
 | `consequenceLevel` | `'low' \| 'medium' \| 'high'` | Real-world impact level |
 | `requiresConfirmation` | boolean | Whether the agent pauses for user approval |
 | `timeout` | number (ms) | Execution timeout. Default: 15000 |
@@ -28,8 +28,9 @@ The universal shape for an LLM agent tool. Every tool in the registry conforms t
 ### Category Definitions
 
 - **read** — Retrieves data from an external source. No mutations. Safe to auto-approve in most cases.
-- **write** — Performs mutations (creates, updates, deletes). Usually requires confirmation.
-- **analysis** — Computes derived insights from data already fetched. No external calls, but the output may influence decisions.
+- **write** — Performs mutations (creates, updates). Usually requires confirmation.
+- **delete** — Permanently removes data. High consequence; typically requires confirmation.
+- **side_effect** — Triggers external side effects (sends emails, fires webhooks, etc.). May or may not require confirmation depending on reversibility.
 
 ### Consequence Level
 

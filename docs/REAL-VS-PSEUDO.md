@@ -36,9 +36,6 @@ These files are **conceptual references**. They do not compile or run as-is. Use
 | `templates/verifier-definition.pseudo.ts` | Interface definitions. Contract spec. |
 | `templates/verifiers-barrel.pseudo.ts` | Verifier barrel pattern. |
 | `docs/examples/weather-api/get-weather.tool.pseudo.ts` | Uses invalid import `'/* your validation library */'`. |
-| `templates/eval-runner.pseudo.ts` | Uses `readFile`, `captureSnapshot` stubs. Reference implementation. |
-| `templates/overlap-validator.pseudo.ts` | Uses `loadJSON`, `loadAllGoldenEvals` stubs. |
-| `templates/meta-eval-checks.pseudo.ts` | Uses `readFile` stub. Rule logic is real; I/O is stubbed. |
 
 ---
 

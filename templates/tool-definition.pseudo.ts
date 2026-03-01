@@ -10,7 +10,7 @@
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-type ToolCategory = 'read' | 'write' | 'analysis';
+type ToolCategory = 'read' | 'write' | 'delete' | 'side_effect';
 type ConsequenceLevel = 'high' | 'medium' | 'low';
 
 // EXTENSION POINT: Replace with your auth type (JWT wrapper, API key, OAuth token, etc.)
@@ -57,9 +57,10 @@ interface ToolDefinition {
 
   // ── Classification ──
   category: ToolCategory;
-  // read    — retrieves data, no mutations
-  // write   — performs mutations (creates, updates, deletes)
-  // analysis — computes derived insights from data
+  // read        — retrieves data, no mutations
+  // write       — performs mutations (creates, updates)
+  // delete      — permanently removes data
+  // side_effect — triggers external side effects (emails, webhooks, etc.)
 
   consequenceLevel: ConsequenceLevel;
   // low    — no real-world impact (read-only, summaries)

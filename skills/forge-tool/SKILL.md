@@ -1,12 +1,12 @@
 ---
 name: forge-tool
-description: Build a new agent tool via structured 11-phase dialogue (phases 0–10). Walks through requirements, challenges necessity, locks the routing contract, then generates implementation code adapted to your stack. Works with any language, any framework.
+description: Build a new agent tool via structured 12-phase dialogue (phases 0–11). Walks through requirements, challenges necessity, locks the routing contract, then generates implementation code adapted to your stack. Works with any language, any framework.
 allowed-tools: Read, Edit, Write, Grep, Glob, Bash, AskUserQuestion
 ---
 
 # Forge Tool
 
-This skill is the entry point for adding a tool to your LLM agent. It conducts a structured 11-phase dialogue (phases 0–10) to ensure every tool earns its place, then generates implementation code adapted to your stack. No TODOs. No stubs.
+This skill is the entry point for adding a tool to your LLM agent. It conducts a structured 12-phase dialogue (phases 0–11) to ensure every tool earns its place, then generates implementation code adapted to your stack. No TODOs. No stubs.
 
 **How it works:** You (Claude) are both orchestrator and developer. The user defines what to build. You challenge, refine, and build it. All code is your responsibility.
 
@@ -16,24 +16,24 @@ This skill is the entry point for adding a tool to your LLM agent. It conducts a
 
 ## Phase 0: Start Forge Dialogue
 
-> **TUI is now the primary path.** The forge service is maintained for users who prefer Claude Code orchestration, but is no longer required. To forge a tool directly in the TUI, open the terminal, run `node lib/index.js`, and select "Forge Tool" from the main menu. The TUI runs the full 11-phase dialogue with live spec preview, file generation, and eval creation — all in one place.
+> **TUI is now the primary path.** The forge service is maintained for users who prefer Claude Code orchestration, but is no longer required. To forge a tool directly in the TUI, open the terminal, run `node lib/index.js`, and select "Forge Tool" from the main menu. The TUI runs the full 12-phase dialogue with live spec preview, file generation, and eval creation — all in one place.
 
 ### Legacy: forge-service path (still supported)
 
 If you prefer the two-terminal workflow with Claude Code as the orchestrator:
 
 1. **Check for active service:**
-   Run: `node cli/forge-service-client.js health`
+   Run: `node lib/forge-service-client.js health`
    - If succeeds: "Forge service already active. Queue is open."
    - If fails: start service:
-     Run: `node cli/forge-service-client.js start`
+     Run: `node lib/forge-service-client.js start`
      Wait for success output (port number).
      Confirm: "Forge service started. Open the TUI in another terminal: `node lib/index.js`"
 
 2. **Enter watch loop:**
    ```
    loop:
-     Run: node cli/forge-service-client.js next
+     Run: node lib/forge-service-client.js next
      - Exit 1 (timeout/empty): continue loop
        (show "Watching forge queue..." every 3rd timeout)
      - Exit 0 (item arrived): display item and prompt:
@@ -43,25 +43,25 @@ If you prefer the two-terminal workflow with Claude Code as the orchestrator:
          {endpoint.method} {endpoint.path} → {endpoint.name}
        ─────────────────────────────────────────────
        What would you like to forge?
-         t) Tool + tests (full 11-phase dialogue)
+         t) Tool + tests (full 12-phase dialogue)
          v) Verifier for this tool
          e) Evals only (tool already exists)
          s) Skip — remove from queue
        > _
 
      Based on choice:
-       t → run Phases 1-10 (with this endpoint pre-loaded as the spec)
+       t → run Phases 1-12 (with this endpoint pre-loaded as the spec)
        v → invoke /forge-verifier flow
        e → invoke /forge-eval flow
        s → do nothing (just complete)
 
      After choice completes:
-     Run: node cli/forge-service-client.js complete
+     Run: node lib/forge-service-client.js complete
      Loop.
    ```
 
 3. **On session end (any exit path):**
-   Run: `node cli/forge-service-client.js shutdown`
+   Run: `node lib/forge-service-client.js shutdown`
 
 > **Note:** If `forge-pending-tool.json` exists in the project root when the loop begins, read it as the first queued item and proceed as if it arrived via queue. Delete the file after `complete`.
 
@@ -134,7 +134,7 @@ Derive mechanically from the locked description:
 
 ### Trigger phrases
 
-Identify **3-5 natural language phrases** a user would say that should route to this tool. These drive eval generation in Phase 9.
+Identify **3-5 natural language phrases** a user would say that should route to this tool. These drive eval generation in Phase 10.
 
 Present: "These are the phrases I'd expect to trigger this tool: [list]. Any I'm missing?"
 
@@ -153,10 +153,11 @@ Collect the remaining ToolDefinition fields conversationally — not as a form d
    - `medium` — moderate impact (analysis influencing decisions)
    - `high` — significant impact (trades, account changes, deletions)
 
-3. **Category** — `'read' | 'write' | 'analysis'`:
+3. **Category** — `'read' | 'write' | 'delete' | 'side_effect'`:
    - `read` — retrieves data, no mutations
-   - `write` — performs mutations
-   - `analysis` — computes derived insights
+   - `write` — performs mutations (creates, updates)
+   - `delete` — permanently removes data
+   - `side_effect` — triggers external side effects (emails, webhooks, etc.)
 
 4. **requiresConfirmation** — ask **separately** from category:
    > "Should the agent pause and wait for user approval before executing?"
@@ -169,7 +170,22 @@ Collect the remaining ToolDefinition fields conversationally — not as a form d
 
 ---
 
-## Phase 5: Dependency Check
+## Phase 5: Routing
+
+Collect the MCP routing layer that maps the tool to a real API endpoint.
+
+1. **endpointTarget** — the URL path the tool calls (e.g. `/api/v1/holdings`)
+2. **httpMethod** — `GET` | `POST` | `PUT` | `DELETE` | `PATCH`
+3. **authType** — `bearer` | `apiKey` | `none`
+4. **paramMap** — object mapping schema field names to API parameter names (can be empty `{}` if names match)
+
+Present the routing config and ask for confirmation before proceeding.
+
+> If the tool does not route to an HTTP endpoint (e.g. local computation), this phase can be skipped with sensible defaults.
+
+---
+
+## Phase 6: Dependency Check
 
 Before generating code, check whether the tool needs any service beyond what `ToolContext` provides.
 
@@ -197,11 +213,11 @@ To unblock:
 No files have been written.
 ```
 
-If no new deps are needed — proceed to Phase 6.
+If no new deps are needed — proceed to Phase 7.
 
 ---
 
-## Phase 6: Confirm Full Spec
+## Phase 7: Confirm Full Spec
 
 Present the complete spec before writing a single file:
 
@@ -235,11 +251,11 @@ Do not write any files until the user confirms.
 
 ---
 
-## Phase 7: Generate and Implement All Files
+## Phase 8: Generate and Implement All Files
 
 Execute in this exact order:
 
-### 7a. Tool Implementation File
+### 8a. Tool Implementation File
 
 Generate the tool as a const export (or your language's equivalent) conforming to ToolDefinition.
 
@@ -252,11 +268,11 @@ Key rules:
 
 If `requiresConfirmation: true`, implement the HITL pattern appropriate to the user's framework (LangGraph interrupt, custom webhook, manual pause, etc.).
 
-### 7b. Register in Barrel
+### 8b. Register in Barrel
 
 Add one line to the barrel/registry file. This should be the **only** existing file edited.
 
-### 7c. Test File
+### 8c. Test File
 
 Write **real, passing tests** — not empty shells.
 
@@ -267,13 +283,13 @@ Minimum test cases:
 
 Use fixed, realistic fixture data — never randomized inputs.
 
-### 7d. Verification/Confirmation File (if requiresConfirmation: true)
+### 8d. Verification/Confirmation File (if requiresConfirmation: true)
 
 If the tool requires confirmation, generate the HITL verification logic appropriate to the user's framework.
 
 ---
 
-## Phase 8: Run Tests
+## Phase 9: Run Tests
 
 After all files are written, run the test suite:
 
@@ -289,7 +305,7 @@ If any test fails:
 
 ---
 
-## Phase 9: Generate Evals
+## Phase 10: Generate Evals
 
 After tests pass, hand off to `/forge-eval` (if available) with this context:
 - Tool `name`, `description`, `category`, `schema`
@@ -300,7 +316,15 @@ If `/forge-eval` is not installed, report that eval generation is available sepa
 
 ---
 
-## Phase 10: Report Output
+## Phase 11: Generate Verifiers
+
+Auto-advance phase. Generate verifier stubs for the new tool using the `/forge-verifier` skill if available.
+
+If `/forge-verifier` is not installed, skip this phase silently.
+
+---
+
+## Phase 12: Done
 
 When all tests are green:
 

@@ -41,9 +41,9 @@ Settings are written to `forge.config.json`.
 
 ## Step 3 — Discover Your API (optional, sidecar deployments)
 
-Open **APIs** from the main menu.
+Open **Endpoints** from the main menu.
 
-The API discovery screen reads your host app's OpenAPI spec or a `config/api-endpoints.json` manifest and shows available endpoints. Select endpoints to incorporate into your tool definitions.
+The API discovery screen reads your host app's OpenAPI spec or an `api-endpoints.json` manifest (see `api.manifestPath` in config) and shows available endpoints. Select endpoints to incorporate into your tool definitions.
 
 See [docs/API-DISCOVERY.md](API-DISCOVERY.md) for details.
 
@@ -51,36 +51,37 @@ See [docs/API-DISCOVERY.md](API-DISCOVERY.md) for details.
 
 ## Step 4 — Build a Tool with `/forge-tool`
 
-Open **Tools → New Tool** from the main menu. This launches a Claude Code session with the `forge-tool` skill loaded.
+Open **Forge Tool** from the main menu. This launches a Claude Code session with the `forge-tool` skill loaded.
 
-The 11-phase dialogue runs in the Claude Code pane:
+The 12-phase dialogue runs in the Claude Code pane:
 
 | Phase | Dialogue |
 |-------|---------|
-| 0 | Claude reads your existing tool registry |
-| 1 | You describe what the tool should do |
-| 2 | Claude challenges necessity and overlap |
-| 3 | You agree on name + description (the routing contract) |
-| 4 | Collect schema, category, consequence level, confirmation flag |
+| 0 | You describe what the tool should do |
+| 1 | Claude challenges necessity and overlap |
+| 2 | You agree on name + description (the routing contract) |
+| 3 | Collect schema, category, consequence level, confirmation flag |
+| 4 | Routing — collect endpoint target, HTTP method, auth type, param mapping |
 | 5 | Dependency check — does your host app provide what the tool needs? |
 | 6 | Full spec review — you sign off |
 | 7 | Claude generates the tool file, tests, and barrel registration |
 | 8 | Tests run — must be green |
 | 9 | Auto-hands off to `/forge-eval` |
-| 10 | Summary of all files created |
+| 10 | Generate verifier stubs |
+| 11 | Done — summary of all files created |
 
-When complete, the TUI returns you to the Tools list with the new tool registered.
+When complete, the TUI returns you to the Tools & Evals list with the new tool registered.
 
 ---
 
 ## Step 5 — Review the Generated Tool
 
-From **Tools**, select your new tool to view its definition:
+From **Tools & Evals**, select your new tool to view its definition:
 
 - `name` — snake_case identifier used in tool calls
 - `description` — the routing contract (what/when/when-not/source)
 - `schema` — input field types and required/optional flags
-- `category` — `read` | `write` | `analysis`
+- `category` — `read` | `write` | `delete` | `side_effect`
 - `consequenceLevel` — `low` | `medium` | `high`
 - `requiresConfirmation` — whether HITL gate triggers for this tool
 - `version` — semver, used for eval staleness detection
@@ -92,7 +93,7 @@ From **Tools**, select your new tool to view its definition:
 
 The eval files were auto-generated in Phase 9. To regenerate or add more:
 
-Open **Evals → Generate** and select your tool.
+Open **Tools & Evals**, select your tool, and choose **Generate evals (AI)**.
 
 `/forge-eval` produces two files:
 
@@ -114,22 +115,22 @@ See [docs/eval-runner-contract.md](eval-runner-contract.md) for the full asserti
 
 ### Via TUI
 
-Open **Evals → Run** and select the eval file. Progress is shown case-by-case. Results are stored in `forge.db` (SQLite).
+Open **Run Evals** and select the eval file. Progress is shown case-by-case. Results are stored in `forge.db` (SQLite).
 
 ### Via CLI
 
 ```bash
 # Run golden evals for a tool
-node lib/index.js run --eval example/evals/get_weather.golden.json
+node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json
 
 # Record fixture (saves real API responses for replay)
-node lib/index.js run --eval example/evals/get_weather.golden.json --record
+node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json --record
 
 # Replay from fixture (no agent calls, zero cost)
-node lib/index.js run --eval example/evals/get_weather.golden.json --replay
+node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json --replay
 
 # Run a named suite
-node lib/index.js run --eval example/evals/get_weather.golden.json --suite smoke
+node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json --suite smoke
 ```
 
 ---
@@ -154,15 +155,14 @@ Once you have tools and passing evals, start the runtime:
 
 ```js
 import { createSidecar } from 'tool-forge'
-import { ALL_TOOLS } from './tools/index.js'
 
-const sidecar = createSidecar({
-  tools: ALL_TOOLS,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  port: 8001,
-})
+const { server, ctx, close } = await createSidecar(
+  { auth: { mode: 'trust' } },
+  { port: 8001 }
+)
 
-sidecar.listen()
+// server is already listening on port 8001
+// call close() on shutdown for clean teardown
 ```
 
 Or via TUI: **Server → Start**.
@@ -215,6 +215,8 @@ node lib/index.js run --eval evals/get_weather.golden.json
 echo $?
 ```
 
-Gate defaults (override in `forge.config.json`):
-- `passRate: 0.9` — 90% of cases must pass
-- `p95LatencyMs: 15000` — 95th-percentile latency under 15 seconds
+Gate settings (configure in `forge.config.json` under `gates`):
+- `passRate` — fraction of cases that must pass (e.g. `0.9` for 90%). Default: `null` (no gate).
+- `p95LatencyMs` — maximum p95 latency in ms (e.g. `15000`). Default: `null` (no gate).
+
+Recommended CI values: `passRate: 0.9`, `p95LatencyMs: 15000`.

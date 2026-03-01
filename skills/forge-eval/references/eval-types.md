@@ -11,9 +11,13 @@ GoldenEvalCase {
   input: {
     message:   string    // The user prompt to send
   }
+  stubs?: {
+    [toolName: string]: object  // Stub response for each tool (activates multi-turn mode)
+  }
+  maxTurns?: number             // Max LLM loop iterations in stub mode (default 5)
   expect: {
     toolsCalled:        string[]    // Exact tools that must be called
-    noToolErrors:       boolean     // All tool calls succeed
+    noToolErrors:       boolean     // In stub mode: all tools must have stub entries
     responseNonEmpty:   boolean     // Agent produced a response
     responseContains?:  string[]    // ALL must appear (exact values)
     responseContainsAny?: string[][] // At least one from EACH group
@@ -26,8 +30,10 @@ GoldenEvalCase {
 ### Field Semantics
 
 - **toolsCalled** — Exact match. If you expect `["get_weather"]`, the agent must call exactly `get_weather` and no other tools.
-- **noToolErrors** — Every tool call in the response has `success: true`. If any tool errored, the eval fails.
-- **responseContains** — Substring match, case-sensitive. Use for exact values that prove the tool returned real data (dollar amounts, names, IDs).
+- **stubs** — Map of tool name → stub return object. When present, activates stub-based multi-turn mode: the runner feeds stub results back to the model after each tool call and continues until the model produces a final text response. Response assertions (`responseContains`, etc.) check the **final** response, not first-turn text. Required for `noToolErrors` and response content assertions to be meaningful.
+- **maxTurns** — Safety cap on the stub-based loop. Defaults to 5. The runner stops after this many LLM turns even if the model keeps calling tools.
+- **noToolErrors** — In stub mode: fails if the model calls a tool that has no entry in `stubs`. In routing-only mode (no `stubs`): no-op.
+- **responseContains** — Substring match, case-sensitive. Use for exact values that prove the tool returned real data (dollar amounts, names, IDs). Meaningful only in stub mode.
 - **responseContainsAny** — Each inner array is a synonym group. At least one member from each group must appear. Use for domain terms where multiple phrasings are acceptable.
 - **responseNotContains** — Substring match, case-sensitive. Use to catch: cop-outs ("I don't know"), raw JSON leaks ("fetchedAt"), sensitive data ("API_KEY").
 

@@ -47,7 +47,7 @@ Everything else is automatic:
 name              — snake_case identifier
 description       — LLM-visible routing contract (what/when/when-not/source)
 schema            — Validation schema (Zod, Pydantic, etc.)
-category          — read | write | analysis
+category          — read | write | delete | side_effect
 consequenceLevel  — low | medium | high
 requiresConfirmation — boolean (triggers HITL gate)
 timeout           — milliseconds

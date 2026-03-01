@@ -51,6 +51,19 @@ The runner must accept two formats:
 
 If the file is a bare array, treat it as `{ "metadata": null, "cases": [...] }`. Staleness checks are skipped when metadata is null.
 
+### Eval Case Fields (selected)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stubs` | `{ [toolName]: object }` | Optional. Stub responses for each tool. Presence switches the runner from routing-only to stub-based multi-turn mode. |
+| `maxTurns` | `number` | Optional. Max iterations of the LLM loop in stub mode. Default 5. |
+| `noToolErrors` | `boolean` | See §3 noToolErrors — semantics differ between stub and routing-only modes. |
+
+**Stub-based multi-turn execution:** When `stubs` is present, the runner runs a full multi-turn
+loop — the model calls tools, stub results are fed back, and the loop continues until the model
+produces a final text response or `maxTurns` is reached. Response assertions (`responseContains`,
+`responseNonEmpty`, etc.) are checked against the **final** LLM response, not the first-turn text.
+
 ### 2. Agent Endpoint
 
 The runner sends each eval case's `input.message` to an agent endpoint and captures:
@@ -285,6 +298,22 @@ ToolCallRecord {
 
 ### 3. noToolErrors
 
+The semantics depend on whether the eval case uses stubs:
+
+**Stub-based mode** (eval case has a `stubs` field) — the built-in runner uses stubbed tool
+results instead of real tool execution. `noToolErrors` fails if the model calls a tool that
+has no entry in the `stubs` map. This catches model hallucinations of non-existent tools.
+
+```
+if expect.noToolErrors and case has stubs:
+  for each tc in response.toolCalls:
+    assert tc.name in case.stubs
+```
+
+**Routing-only mode** (no `stubs` field) — tools are never executed, so `noToolErrors`
+is a no-op. The assertion is logically undefined when no execution occurs.
+
+**Custom runners using real tool execution:**
 ```
 if expect.noToolErrors:
   for each tc in response.toolCalls:

@@ -34,7 +34,8 @@
 
   "gates": {
     "passRate": 0.9,
-    "p95LatencyMs": 15000
+    "p95LatencyMs": 15000,
+    "_comment": "gates default to null (no gate) when omitted; values shown are recommended CI settings"
   },
 
   "fixtures": {
@@ -103,9 +104,9 @@
 | Level | Behavior |
 |-------|----------|
 | `autonomous` | No confirmations required. All tools execute automatically. |
-| `cautious` | Confirm `write` tools with `high` consequence only. |
-| `standard` | Confirm all `write` tools and `read` tools with `high` consequence. |
-| `paranoid` | Confirm everything. |
+| `cautious` | Pause only for tools with `requiresConfirmation: true`. |
+| `standard` | Pause for any tool using a mutating HTTP method (POST, PUT, PATCH, DELETE). |
+| `paranoid` | Confirm everything. All tool calls pause for approval. |
 
 ### Agent Endpoint (Eval Runner)
 
@@ -118,8 +119,8 @@
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `gates.passRate` | number | `0.9` | Minimum fraction of eval cases that must pass. CI exits non-zero if violated. |
-| `gates.p95LatencyMs` | number | `15000` | Maximum p95 latency across cases in milliseconds. |
+| `gates.passRate` | number | `null` | Minimum fraction of eval cases that must pass (0-1). `null` = no gate. CI exits non-zero if set and violated. |
+| `gates.p95LatencyMs` | number | `null` | Maximum p95 latency across cases in milliseconds. `null` = no gate. |
 
 ### Fixtures (Record/Replay)
 

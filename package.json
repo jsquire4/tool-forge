@@ -36,7 +36,7 @@
     "forge-service": "./lib/forge-service.js"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=18"
   },
   "scripts": {
     "start": "node lib/index.js",

@@ -131,6 +131,16 @@ config/
   forge.config.template.json
 ```
 
+## Standing on Shoulders
+
+Tool-Forge integrates ideas and code from two excellent open-source projects:
+
+- **[evalkit](https://github.com/wkhori/evalkit)** by wkhori — MIT License
+  Provides the deterministic check suite (`lib/checks/`): content matching, tool selection verification, schema validation, and the `runChecks()` meta-runner. Used under MIT license with attribution in each file.
+
+- **[agent-eval-kit](https://github.com/FlanaganSe/agent-eval-kit)** by FlanaganSe — MIT License
+  Provides fixture-based record/replay (`lib/fixtures/`), statistical comparison with Wilson confidence intervals (`lib/comparison/`), gate evaluation (`lib/runner/gate.js`), and composition operators (`lib/checks/compose.js`). Used under MIT license with attribution in each file.
+
 ## Background
 
 This workflow was extracted from a production project where 6 agent tools and 100+ evals were built in ~2 hours using structured skill-driven dialogue. The workflow — not the stack-specific code — is the valuable artifact. Tool-Forge generalizes it for any framework, any language.

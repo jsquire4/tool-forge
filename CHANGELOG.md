@@ -5,6 +5,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.0] — 2026-03-01
+
+### Added
+
+- **`PostgresEvalStore`** — durable eval results on Railway/Postgres; `insertEvalRun()`, `insertEvalRunCases()`, `getEvalSummary()`, `getPerToolRunHistory()` fully transactional with Postgres
+- **`PostgresChatAuditStore`** — persists `chat_audit` rows to Postgres; replaces ephemeral SQLite audit log when `DATABASE_URL` is set
+- **`PostgresVerifierStore`** — persists verifier registry and tool bindings to Postgres; `upsertVerifier()`, `getAllVerifiers()`, `deleteVerifier()` (transactional), `upsertVerifierBinding()`, `getVerifiersForTool()`, `getBindingsForVerifier()`
+- **`PostgresStore` write path for tool_registry** — `upsertToolRegistry()`, `getToolRegistry()`, `getAllToolRegistry()`, `updateToolLifecycle()` added to the existing base store class
+- **Postgres schema additions** — `eval_runs`, `eval_run_cases`, `chat_audit`, `verifier_registry`, `verifier_tool_bindings` created on startup via `CREATE TABLE IF NOT EXISTS`
+- **`auditLog()` helper in chat handlers** — all three chat handlers (`chat.js`, `chat-sync.js`, `chat-resume.js`) now route audit writes to `ctx.chatAuditStore` (Postgres) when available, falling back to SQLite
+- **`eval-runner.js` Postgres fallback** — when `DATABASE_URL` is set, eval results write to Postgres instead of SQLite; `ownPool` tracking prevents double-`end()` when a pool is injected
+- **`verifier-runner.js` Postgres load path** — `loadFromDb()` uses async Postgres queries when `pgPool` is supplied; `logResult()` fire-and-forgets to `verifier_results` via pgPool
+
+### Fixed
+
+- **JS `//` comment inside SQL template literal** (`postgres-store.js`) — `upsertVerifier()` had a JS comment embedded inside the backtick SQL string; Postgres syntax error on every call; moved to a JS comment outside the query
+- **`rows[0]` unguarded access** (`postgres-store.js`) — `insertEvalRun()` and `insertChatAudit()` both returned `rows[0].id` without null guard; changed to `rows[0]?.id ?? null`
+- **`deleteVerifier()` non-atomic deletes** (`postgres-store.js`) — two sequential `DELETE` statements without a transaction; could leave orphan bindings on partial failure; wrapped in `BEGIN`/`COMMIT`/`ROLLBACK`
+- **`logResult()` silent data loss** (`verifier-runner.js`) — when `this._db` is `null` (Postgres-only deployment), the method returned early without writing anything; added fire-and-forget Postgres path before the SQLite path
+- **`loadFromDb()` sort crash on null `aciru_order`** (`verifier-runner.js`) — `localeCompare` called on potentially null values; added `?? 'Z-9999'` guard matching the existing `verify()` guard
+- **`destroy()` incomplete timer cleanup** (`hitl-engine.js`) — only cleared `_pgCleanupTimer`; `_cleanupTimer` and `_sqliteCleanupTimer` were not cleared; now clears all three
+- **`_ensurePgTable()` race condition** (`hitl-engine.js`) — concurrent callers could trigger multiple `CREATE TABLE` calls and register multiple `setInterval` cleanup timers; fixed with a promise-based gate (`_pgTableEnsurePromise`) that serializes all callers on a single in-flight promise
+- **Redis per-user set not cleaned up on COMPLETE** (`conversation-store.js`) — the COMPLETE marker pipeline removed from the global active set but not the per-user set; added `sRem` to per-user set in `persistMessage()`
+- **`deleteSession()` per-user set leak** (`conversation-store.js`) — `deleteSession()` did not remove the session from the per-user set; added `sRem` after the global set cleanup
+- **`listSessions()` stale cleanup wrong set** (`conversation-store.js`) — stale entries were removed from the global set but the per-user set was not touched; now removes from both sets
+- **`shutdown()` Redis drain missing** (`forge-service.js`) — `shutdown()` closed the pg pool but did not call `quit()` on the Redis client; added async drain with try/catch
+
+### Tests
+
+- 9 new tests in `postgres-store.test.js` covering `PostgresEvalStore`, `PostgresChatAuditStore`, `PostgresVerifierStore`, and `updateToolLifecycle` SQL injection prevention
+- 4 new `destroy()` tests in `hitl-engine.test.js` covering in-memory, SQLite, Postgres, and pre-init teardown paths
+- 2 new tests in `eval-runner.test.js` covering `ownPool=false` (injected pool not ended) and stderr write on DB failure
+
+---
+
 ## [0.3.0] — 2026-03-01
 
 ### Added
@@ -85,6 +120,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **TUI** (`lib/index.js`) — blessed-based terminal interface with main menu, tools & evals view, model comparison, drift monitor, forge workflow, onboarding, and settings screens
 - **HTTP sidecar endpoints**: `POST /agent-api/chat` (SSE), `POST /agent-api/chat-sync`, `POST /agent-api/chat/resume`, `GET/PUT /agent-api/user/preferences`, `GET /agent-api/conversations`, `GET /agent-api/tools`, `PUT /forge-admin/config/:section`, `GET/POST/PUT/DELETE /forge-admin/agents*`
 
-[0.3.0]: https://github.com/jsquire4/tool-forge/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/jsquire4/tool-forge/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/jsquire4/tool-forge/releases/tag/v0.1.0
+[0.4.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/jsquire4/agent-tool-forge/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/jsquire4/agent-tool-forge/releases/tag/v0.1.0

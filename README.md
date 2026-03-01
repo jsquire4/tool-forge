@@ -91,7 +91,7 @@ Then in any Claude Code session:
 - **HITL** — four levels (autonomous → paranoid), pause/resume with 5-minute TTL
 - **Verifiers** — post-response quality pipeline (warnings + flags, ACIRU ordering)
 - **Eval runner** — `node lib/index.js run --eval <path>` executes eval JSON, checks assertions, stores results in SQLite; `--record` / `--replay` for fixture-based testing
-- **Observability** — token tracking, cost estimation, per-tool metrics in SQLite
+- **Observability** — token tracking, cost estimation, per-tool metrics; chat audit log and eval history stored in Postgres when `DATABASE_URL` is set (durable across Railway/ephemeral filesystem deploys)
 - **Web component** — `<forge-chat>` drop-in chat widget (vanilla JS, zero deps)
 
 ---
@@ -103,7 +103,7 @@ The sidecar core requires only `better-sqlite3`. Additional backends are loaded 
 | Package | When needed |
 |---------|-------------|
 | `redis` or `ioredis` | `conversation.store: 'redis'` or `rateLimit.enabled: true` with Redis backend |
-| `pg` | `database.type: 'postgres'` — Postgres conversation store, agent registry, and preferences |
+| `pg` | `database.type: 'postgres'` — Postgres conversation store, agent registry, preferences, eval results, chat audit log, and verifier registry |
 
 ```bash
 # Redis backend
@@ -133,7 +133,12 @@ import { makePreferenceStore } from 'tool-forge/preference-store'
 import { makeRateLimiter }     from 'tool-forge/rate-limiter'
 import { getDb }               from 'tool-forge/db'
 import { initSSE }             from 'tool-forge/sse'
-import { PostgresStore }       from 'tool-forge/postgres-store'
+import {
+  PostgresStore,
+  PostgresEvalStore,
+  PostgresChatAuditStore,
+  PostgresVerifierStore
+}                              from 'tool-forge/postgres-store'
 import { buildSidecarContext, createSidecarRouter } from 'tool-forge/forge-service'
 ```
 

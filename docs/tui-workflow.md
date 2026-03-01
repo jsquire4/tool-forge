@@ -115,7 +115,7 @@ See [docs/eval-runner-contract.md](eval-runner-contract.md) for the full asserti
 
 ### Via TUI
 
-Open **Run Evals** and select the eval file. Progress is shown case-by-case. Results are stored in `forge.db` (SQLite).
+Open **Run Evals** and select the eval file. Progress is shown case-by-case. Results are held in memory and displayed in the TUI. (Results are written to `forge.db` only when running via the **Tools & Evals → Run evals** path that uses `lib/eval-runner.js` directly.)
 
 ### Via CLI
 
@@ -129,7 +129,7 @@ node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json -
 # Replay from fixture (no agent calls, zero cost)
 node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json --replay
 
-# Run a named suite
+# Run with a suite label (shown in output; does not filter cases)
 node lib/index.js run --eval docs/examples/weather-api/get-weather.golden.json --suite smoke
 ```
 
@@ -143,7 +143,7 @@ The TUI shows a per-case breakdown:
 - First failure reason (when failed)
 - Latency per case
 
-Summary line: `N/M passed | K failed | latency p50/p95`
+Summary line: `N/M passed | K failed | p95 latency: Xms`
 
 Gate thresholds (configured in `forge.config.json` under `gates`) emit a non-zero exit code when violated — useful in CI.
 
@@ -165,7 +165,7 @@ const { server, ctx, close } = await createSidecar(
 // call close() on shutdown for clean teardown
 ```
 
-Or via TUI: **Server → Start**.
+Or via TUI: press `s` on the main menu to toggle the sidecar on/off.
 
 ---
 
@@ -218,5 +218,6 @@ echo $?
 Gate settings (configure in `forge.config.json` under `gates`):
 - `passRate` — fraction of cases that must pass (e.g. `0.9` for 90%). Default: `null` (no gate).
 - `p95LatencyMs` — maximum p95 latency in ms (e.g. `15000`). Default: `null` (no gate).
+- `maxCost` — maximum total cost in USD for the run (e.g. `0.05`). Default: `null` (no gate).
 
 Recommended CI values: `passRate: 0.9`, `p95LatencyMs: 15000`.

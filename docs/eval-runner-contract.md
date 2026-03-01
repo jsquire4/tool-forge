@@ -14,19 +14,15 @@ This document specifies what a conforming eval runner must do. Tool-Forge ships 
 
 ```
                      ┌──────────────────┐
-  eval JSON file  →  │                  │  → EvalSuiteResult JSON
-  seed manifest   →  │   Eval Runner    │
-  snapshot data   →  │                  │  → console summary
-  agent endpoint  →  │                  │  → baseline diff (optional)
+  eval JSON file  →  │                  │  → SQLite results
+  agent endpoint  →  │   Eval Runner    │  → console summary
                      └──────────────────┘
 ```
 
 The runner's job:
-1. Load an eval file (golden or labeled JSON)
-2. Resolve template tokens (`{{seed:*}}`, `{{snapshot:*}}`) in assertion values
-3. Check metadata staleness (if envelope present)
-4. For each case: send the message to the agent, capture the response, run assertions
-5. Emit an `EvalSuiteResult` JSON file and a human-readable summary
+1. Load an eval file (golden or labeled JSON bare array)
+2. For each case: send the message to the agent, capture the response, run assertions
+3. Store results in SQLite (`forge.db`) and print a human-readable summary
 
 ---
 
@@ -34,22 +30,13 @@ The runner's job:
 
 ### 1. Eval File Format
 
-The runner must accept two formats:
+The built-in runner accepts **bare array format only**:
 
-**Envelope format** (preferred):
 ```json
-{
-  "metadata": { ... },
-  "cases": [ ... ]
-}
+[ { "id": "case-001", "input": { "message": "..." }, "expect": { ... } }, ... ]
 ```
 
-**Bare array format** (legacy/simple):
-```json
-[ ... ]
-```
-
-If the file is a bare array, treat it as `{ "metadata": null, "cases": [...] }`. Staleness checks are skipped when metadata is null.
+Envelope format (`{ "metadata": { ... }, "cases": [...] }`) is planned for a future release and is not yet supported by the built-in runners.
 
 ### Eval Case Fields (selected)
 
@@ -101,6 +88,8 @@ ToolCallRecord {
 }
 ```
 
+> The following Seed Manifest, Snapshot, and Template Token sections describe planned features not yet implemented in the built-in runners.
+
 ### 3. Seed Manifest
 
 A JSON file mapping stable domain values:
@@ -139,6 +128,8 @@ If snapshot capture is not configured, `{{snapshot:*}}` tokens resolve to `null`
 ---
 
 ## Template Token Resolution
+
+> **Status: Future Work — not yet implemented.** The built-in runners do not currently parse or resolve `{{seed:*}}` or `{{snapshot:*}}` tokens. All assertion values are used as literal strings.
 
 ### Path Syntax
 
@@ -193,6 +184,8 @@ When a token resolves to UNRESOLVED:
 
 ## Staleness Checks
 
+> **Status: Future Work — not yet implemented.** The built-in runners do not currently read eval file metadata or perform staleness checks.
+
 When metadata is present on the eval file:
 
 ### Description Hash Check
@@ -233,7 +226,7 @@ When metadata is present on the eval file:
 
 ## Assertion Execution
 
-For each eval case, run assertions in this order. Stop at first failure (short-circuit).
+For each eval case, all applicable assertions run — failures are **collected** (not short-circuited). The case fails if any assertion fails; all failure reasons are reported together.
 
 ### 1. toolsCalled / toolsAcceptable
 
@@ -244,16 +237,12 @@ if expect.toolsCalled:
 
 if expect.toolsAcceptable:
   actualNames = response.toolCalls.map(tc => tc.name)
-  // Special case: ["__none__"] means no tools should be called
-  if expect.toolsAcceptable includes ["__none__"]:
-    acceptableSets = expect.toolsAcceptable.filter(s => s !== ["__none__"])
-    acceptableSets.push([])  // empty set = no tools called
-  assert actualNames matches ANY of the acceptable sets (order-insensitive per set)
-
-if expect.toolsNotCalled:
-  actualNames = response.toolCalls.map(tc => tc.name)
-  for each forbidden in expect.toolsNotCalled:
-    assert forbidden NOT IN actualNames
+  // Each set is a string[]. Special token '__none__' inside a set means no tools called.
+  anyMatch = expect.toolsAcceptable.some(set => {
+    if set.includes('__none__') and actualNames.length === 0: return true
+    return set and actualNames contain the same tools (order-insensitive)
+  })
+  assert anyMatch
 ```
 
 ### 2. toolParams (parameter-level assertions)
@@ -327,7 +316,7 @@ if expect.responseNonEmpty:
   assert response.response.trim().length > 0
 ```
 
-### 4. responseContains
+### 5. responseContains
 
 ```
 if expect.responseContains:
@@ -337,7 +326,7 @@ if expect.responseContains:
     assert response.response.includes(resolved)  // case-sensitive
 ```
 
-### 5. responseContainsAny
+### 6. responseContainsAny
 
 ```
 if expect.responseContainsAny:
@@ -347,7 +336,7 @@ if expect.responseContainsAny:
     assert resolvedGroup.some(v => response.response.includes(v))  // case-sensitive
 ```
 
-### 6. responseNotContains
+### 7. responseNotContains
 
 ```
 if expect.responseNotContains:
@@ -355,15 +344,6 @@ if expect.responseNotContains:
     resolved = resolveToken(value, seed, snapshot)
     if resolved === UNRESOLVED: skip
     assert !response.response.includes(resolved)  // case-sensitive
-```
-
-### 7. responseMatches (labeled evals only)
-
-```
-if expect.responseMatches:
-  for each pattern in expect.responseMatches:
-    regex = new RegExp(pattern)
-    assert regex.test(response.response)
 ```
 
 ### 8. maxLatencyMs
@@ -375,106 +355,84 @@ if expect.maxLatencyMs:
 
 **Latency measurement definition:** Wall-clock time from the moment the runner sends the message to the agent endpoint to the moment the complete response (including all tool calls) is received. This is the user-perceived latency, not individual tool execution time.
 
-### 9. maxTokens (labeled evals only)
+---
 
+## Planned Assertions (Not Yet Implemented)
+
+These assertions are documented here for reference. They will be added in a future release.
+
+### toolsNotCalled
+
+Verifies that specific tools were NOT called during the agent turn:
+
+```json
+"expect": { "toolsNotCalled": ["get_forecast"] }
 ```
-if expect.maxTokens:
-  tokenCount = estimateTokens(response.response)  // EXTENSION POINT: your tokenizer
-  assert tokenCount <= expect.maxTokens
+
+Fails if any tool in `toolsNotCalled` appears in the actual tools called.
+
+### toolParams (parameter-level assertions)
+
+Verifies that specific parameters were passed to tool calls:
+
+```json
+"expect": {
+  "toolParams": [
+    { "tool": "get_weather", "paramName": "city", "assertion": "equals", "value": "Paris" },
+    { "tool": "get_weather", "paramName": "units", "assertion": "oneOf", "value": ["celsius", "metric"] }
+  ]
+}
 ```
+
+Assertion types: `equals`, `contains`, `oneOf`, `exists`, `notExists`, `matches` (regex).
+
+This requires the agent endpoint to return tool parameter values in `ToolCallRecord.params`.
 
 ---
 
 ## Output Format
 
-### EvalSuiteResult (file-level)
+### SQLite Storage (`lib/eval-runner.js`)
 
-The runner must write this JSON to disk after each run:
+The standalone eval runner (`lib/eval-runner.js`) writes results to SQLite (`forge.db` or the path from `config.dbPath`):
+
+- **`eval_runs`** table — one row per run: `tool_name`, `eval_type`, `total_cases`, `passed`, `failed`, `skipped`, `pass_rate`, `model`, `notes`
+- **`eval_run_cases`** table — one row per case: `case_id`, `tool_name`, `status`, `reason`, `tools_called`, `latency_ms`, `model`, `input_tokens`, `output_tokens`
+
+`pass_rate` is computed as `passed / (passed + failed)` — skipped cases are excluded from the denominator.
+
+### In-Memory Summary (`lib/runner/index.js`)
+
+The programmatic runner (`runEvalSuite`) returns results in memory — no file or SQLite write:
 
 ```json
 {
-  "runId": "{{uuid}}",
-  "timestamp": "{{ISO 8601}}",
-  "tier": "golden | labeled",
-  "toolName": "{{tool_name}}",
-  "agentEndpoint": "{{endpoint URL or identifier}}",
-  "metadata": {
-    "toolVersion": "{{current tool version}}",
-    "descriptionHash": "{{current description hash}}",
-    "registrySize": "{{current registry size}}",
-    "evalFileHash": "{{hash of the eval JSON file}}"
-  },
-  "stalenessWarnings": [
-    "// ... any staleness warnings emitted during the run ..."
-  ],
+  "total": 6,
+  "passed": 5,
+  "failed": 1,
+  "skipped": 0,
+  "passRate": 0.833,
+  "p95LatencyMs": 2100,
+  "totalCost": 0.00032,
   "cases": [
-    {
-      "id": "gs-get-weather-001",
-      "description": "trigger phrase — direct weather question",
-      "passed": true,
-      "durationMs": 1250,
-      "assertionsRun": 6,
-      "assertionsSkipped": 0,
-      "details": {
-        "toolsCalled": ["get_weather"],
-        "responseLength": 142,
-        "skippedTokens": []
-      }
-    },
-    {
-      "id": "gs-get-weather-002",
-      "description": "trigger phrase — asking about temperature",
-      "passed": false,
-      "durationMs": 2100,
-      "assertionsRun": 4,
-      "assertionsSkipped": 1,
-      "error": "responseContains: expected 'Tokyo' in response but not found",
-      "details": {
-        "toolsCalled": ["get_forecast"],
-        "responseLength": 89,
-        "skippedTokens": ["{{snapshot:prices.current}}"]
-      }
-    }
+    { "id": "gs-001", "status": "passed", "reason": null },
+    { "id": "gs-002", "status": "failed", "reason": "responseContains: expected 'Tokyo' not found" }
   ],
-  "summary": {
-    "totalCases": 6,
-    "passed": 5,
-    "failed": 1,
-    "skippedAssertions": 1,
-    "totalDurationMs": 8500,
-    "estimatedCostUsd": 0.032
-  },
-  "baselineRunId": "{{previous run ID for diff, or null}}",
-  "regressions": [
-    "// ... cases that passed in baselineRunId but fail now ..."
-  ],
-  "newPasses": [
-    "// ... cases that failed in baselineRunId but pass now ..."
-  ]
+  "gates": { "pass": true, "results": [...] }
 }
 ```
 
-### Console Summary
-
-The runner should print a human-readable summary:
+### Console Summary (CLI runner)
 
 ```
-═══ get_weather — golden evals ════════════════════════════════════
-  ✓ gs-get-weather-001  trigger phrase — direct weather question      1250ms
-  ✓ gs-get-weather-002  trigger phrase — asking about temperature     1100ms
-  ✓ gs-get-weather-003  trigger phrase — general conditions           1300ms
-  ✓ gs-get-weather-004  rephrased — casual wording                    980ms
-  ✗ gs-get-weather-005  no raw JSON leak                             2100ms
-    → responseNotContains: found "fetchedAt" in response
-  ✓ gs-get-weather-006  disambiguation — current not forecast        1200ms
-───────────────────────────────────────────────────────────────────
-  5/6 passed | 1 failed | 0 skipped assertions | 7930ms total
-  ⚠ Description hash mismatch (generated: abc123, current: def456)
+✓ 5/5 passed (100.0%), p95 latency: 1300ms, est. cost: $0.000320
 ```
 
 ---
 
 ## Baseline Diffing
+
+> **Status: Future Work — not yet implemented.** The built-in runners do not currently perform baseline diffing.
 
 When `baselineRunId` is provided (from a previous run's `runId`):
 
@@ -508,4 +466,4 @@ The runner should accept configuration via file or CLI flags:
 
 - **concurrency:** Number of eval cases to run in parallel. Default 1 (sequential). Increase for faster runs, but beware rate limits on the agent endpoint.
 - **timeoutMs:** Overall timeout per case (not per assertion). If the agent doesn't respond within this window, the case fails with "timeout".
-- **toolRegistryPath:** Path to the barrel file, used for staleness checks (reading current tool versions and descriptions).
+- **toolRegistryPath:** Intended for staleness checks (reading current tool versions). Not currently read by the built-in runners.

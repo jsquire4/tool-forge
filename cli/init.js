@@ -10,7 +10,7 @@
  * and optionally forge-widget.html.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
@@ -19,6 +19,60 @@ import { mergeDefaults, validateConfig } from './config-schema.js';
 import { ensureDependencyInteractive } from './dep-check.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ── Security / file helpers ──────────────────────────────────────────────────
+
+/**
+ * Reject values containing newline or null characters before writing to .env.
+ * @param {*} val
+ * @returns {string}
+ */
+export function sanitizeEnvValue(val) {
+  if (typeof val !== 'string') return String(val ?? '');
+  if (/[\r\n\0]/.test(val)) {
+    throw new Error(`Invalid value: newline characters are not allowed in .env values`);
+  }
+  return val;
+}
+
+/**
+ * Validate a URL is safe to fetch (no private/loopback/file addresses).
+ * Throws if the URL is unsafe.
+ * @param {string} rawUrl
+ */
+export function assertSafeUrl(rawUrl) {
+  let u;
+  try { u = new URL(rawUrl); } catch { throw new Error('Invalid URL format'); }
+  if (!['http:', 'https:'].includes(u.protocol)) {
+    throw new Error('Only http:// and https:// URLs are allowed');
+  }
+  const host = u.hostname.toLowerCase();
+  // Block private/loopback/link-local addresses
+  if (
+    host === 'localhost' ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    host === '::1' ||
+    /^fc[0-9a-f]{2}:/i.test(host) ||
+    /^fd[0-9a-f]{2}:/i.test(host)
+  ) {
+    throw new Error('Private, loopback, and link-local URLs are not allowed');
+  }
+}
+
+/**
+ * Write a file atomically via a temp file + rename.
+ * @param {string} destPath
+ * @param {string} content
+ */
+export function atomicWriteFile(destPath, content) {
+  const tmp = `${destPath}.tmp.${process.pid}`;
+  writeFileSync(tmp, content, 'utf8');
+  renameSync(tmp, destPath);
+}
 
 // ── Prompt helpers ──────────────────────────────────────────────────────────
 
@@ -162,8 +216,11 @@ export function mergeEnvFile(envPath, newEntries) {
   const added = [];
   const skipped = [];
 
+  // Track which keys already existed before we add new ones
+  const preExistingKeys = new Set(Object.keys(existing));
+
   for (const [key, value] of Object.entries(newEntries)) {
-    if (existing[key]) {
+    if (key in existing) {
       skipped.push(key);
     } else {
       existing[key] = value;
@@ -171,8 +228,14 @@ export function mergeEnvFile(envPath, newEntries) {
     }
   }
 
-  const lines = Object.entries(existing).map(([k, v]) => `${k}=${v}`);
-  writeFileSync(envPath, lines.join('\n') + '\n', 'utf-8');
+  const lines = Object.entries(existing).map(([k, v]) => {
+    // Apply sanitization to newly added values
+    if (!preExistingKeys.has(k)) {
+      return `${k}=${sanitizeEnvValue(v)}`;
+    }
+    return `${k}=${v}`;
+  });
+  atomicWriteFile(envPath, lines.join('\n') + '\n');
 
   return { added, skipped };
 }
@@ -216,7 +279,7 @@ export function writeWidgetHtml(filePath, port, agentId) {
 </body>
 </html>
 `;
-  writeFileSync(filePath, html, 'utf-8');
+  atomicWriteFile(filePath, html);
 }
 
 // ── Main wizard ─────────────────────────────────────────────────────────────
@@ -268,12 +331,19 @@ export async function runInit(opts = {}) {
       else if (envKeys.some(k => /GOOGLE|GEMINI/i.test(k))) provider = 'google';
       console.log(`\nAPI key detected (${provider}). Skipping.`);
     } else {
-      console.log('');
-      const keyInput = await ask(rl, 'Enter your API key (or KEY_NAME=value)');
-      if (keyInput) {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        console.log('');
+        const keyInput = await ask(rl, 'Enter your API key (or KEY_NAME=value)');
+        if (!keyInput) break;
         if (keyInput.includes('=')) {
           const eqIdx = keyInput.indexOf('=');
-          apiKeyEnvName = keyInput.slice(0, eqIdx).trim().toUpperCase();
+          const candidateName = keyInput.slice(0, eqIdx).trim().toUpperCase();
+          if (!/^[A-Z_][A-Z0-9_]*$/.test(candidateName)) {
+            console.log('  ✗ Invalid env var name. Use only letters, digits, and underscores (e.g. MY_API_KEY=sk-...)');
+            continue;
+          }
+          apiKeyEnvName = candidateName;
           apiKeyValue = keyInput.slice(eqIdx + 1).trim();
           // Infer provider from env name
           if (/ANTHROPIC/i.test(apiKeyEnvName)) provider = 'anthropic';
@@ -289,6 +359,7 @@ export async function runInit(opts = {}) {
           apiKeyEnvName = detected.envKey;
           apiKeyValue = keyInput;
         }
+        break;
       }
     }
 
@@ -338,7 +409,14 @@ export async function runInit(opts = {}) {
 
       if (authMode === 'verify') {
         signingKeyEnvName = await ask(rl, 'Signing key env var name', 'JWT_SIGNING_KEY');
-        signingKeyValue = await ask(rl, `Value for ${signingKeyEnvName}`);
+        signingKeyValue = await ask(rl, `Value for ${signingKeyEnvName} (leave empty to use trust mode instead)`);
+        if (!signingKeyValue.trim()) {
+          // User left empty — fall back to trust mode, don't write placeholder
+          authMode = 'trust';
+          signingKeyEnvName = null;
+          signingKeyValue = null;
+          console.log('  → Using trust mode (no JWT verification). Set auth.mode to "verify" later by adding a signing key.');
+        }
       }
     }
 
@@ -349,21 +427,29 @@ export async function runInit(opts = {}) {
       console.log('');
       discoveryUrl = await ask(rl, 'OpenAPI spec URL? (press Enter to skip)');
       if (discoveryUrl) {
-        // Attempt fetch with 10s timeout
+        // Validate URL is safe before fetching
         try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 10000);
-          const res = await fetch(discoveryUrl, { signal: controller.signal });
-          clearTimeout(timer);
-          if (res.ok) {
-            const body = await res.json();
-            const paths = Object.keys(body.paths || {});
-            console.log(`  Found ${paths.length} path(s) in spec.`);
-          } else {
-            console.log(`  Warning: got HTTP ${res.status} — saving URL anyway.`);
-          }
+          assertSafeUrl(discoveryUrl);
         } catch (err) {
-          console.log(`  Could not fetch spec (${err.message}) — saving URL anyway.`);
+          console.log(`  ✗ Discovery URL rejected: ${err.message}`);
+          discoveryUrl = null;
+        }
+        if (discoveryUrl) {
+          // Attempt fetch with 10s timeout and 512KB response cap
+          try {
+            const resp = await fetch(discoveryUrl, { signal: AbortSignal.timeout(10000) });
+            const text = await resp.text();
+            if (text.length > 512 * 1024) throw new Error('Response too large (max 512KB)');
+            if (resp.ok) {
+              const body = JSON.parse(text);
+              const paths = Object.keys(body.paths || {});
+              console.log(`  Found ${paths.length} path(s) in spec.`);
+            } else {
+              console.log(`  Warning: got HTTP ${resp.status} — saving URL anyway.`);
+            }
+          } catch (err) {
+            console.log(`  Could not fetch spec (${err.message}) — saving URL anyway.`);
+          }
         }
       } else {
         console.log('  You can add API discovery later in forge.config.json → api.discovery');
@@ -400,9 +486,12 @@ export async function runInit(opts = {}) {
 
     const raw = { defaultModel: model };
 
+    // Generate adminKey value for .env (never written plaintext to config)
+    const adminKeyValue = hasSidecar ? generateAdminKey() : null;
+
     if (hasSidecar) {
       raw.sidecar = { enabled: true, port: 8001 };
-      raw.adminKey = generateAdminKey();
+      raw.adminKey = '${FORGE_ADMIN_KEY}';
       raw.auth = { mode: authMode };
       if (authMode === 'verify') {
         raw.auth.signingKey = `\${${signingKeyEnvName}}`;
@@ -444,11 +533,11 @@ export async function runInit(opts = {}) {
       if (!overwrite) {
         console.log('  Skipping forge.config.json');
       } else {
-        writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+        atomicWriteFile(configPath, JSON.stringify(merged, null, 2) + '\n');
         filesWritten.push('forge.config.json');
       }
     } else {
-      writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+      atomicWriteFile(configPath, JSON.stringify(merged, null, 2) + '\n');
       filesWritten.push('forge.config.json');
     }
 
@@ -458,8 +547,8 @@ export async function runInit(opts = {}) {
     if (apiKeyEnvName && apiKeyValue) {
       envEntries[apiKeyEnvName] = apiKeyValue;
     }
-    if (hasSidecar && raw.adminKey) {
-      envEntries.FORGE_ADMIN_KEY = raw.adminKey;
+    if (hasSidecar && adminKeyValue) {
+      envEntries.FORGE_ADMIN_KEY = adminKeyValue;
     }
     if (signingKeyEnvName && signingKeyValue) {
       envEntries[signingKeyEnvName] = signingKeyValue;
@@ -498,7 +587,7 @@ export async function runInit(opts = {}) {
     // ── Summary ──────────────────────────────────────────────────────────
 
     const modeLabel = mode === 'sidecar' ? 'sidecar' : mode === 'both' ? 'tui + sidecar' : 'tui';
-    const dbLabel = dbType === 'postgres' ? 'postgres' : 'sqlite';
+    const dbLabel = conversationStore === 'redis' ? 'redis' : dbType === 'postgres' ? 'postgres' : 'sqlite';
     const portLabel = hasSidecar ? `, port ${merged.sidecar.port}` : '';
 
     console.log('\n── Forge initialized ──────────────────────────────────────');

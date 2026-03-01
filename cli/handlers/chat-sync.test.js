@@ -115,8 +115,7 @@ describe('handleChatSync', () => {
     const res = makeRes();
 
     reactLoop.mockReturnValue((async function* () {
-      yield { type: 'text', content: 'Hello ' };
-      yield { type: 'text', content: 'world!' };
+      yield { type: 'text', content: 'Hello world!' };
       yield { type: 'done', usage: { inputTokens: 10, outputTokens: 20 } };
     })());
 
@@ -236,5 +235,38 @@ describe('handleChatSync', () => {
     expect(history[0].content).toBe('hello');
     expect(history[1].role).toBe('assistant');
     expect(history[1].content).toBe('Response');
+  });
+
+  it('multi-turn text events: result.message equals LAST text event (overwrite not append)', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+
+    reactLoop.mockReturnValue((async function* () {
+      yield { type: 'text', content: 'First response' };
+      yield { type: 'text', content: 'Second response' };
+      yield { type: 'done', usage: {} };
+    })());
+
+    await handleChatSync(makeReq({ message: 'hi' }, token), res, makeCtx(db));
+
+    const body = res._body();
+    // Each text event is authoritative — second overwrites first
+    expect(body.message).toBe('Second response');
+  });
+
+  it('hitlEngine absent + hitl event → 500 response', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+
+    reactLoop.mockReturnValue((async function* () {
+      yield { type: 'hitl', tool: 'dangerous_tool', message: 'Needs confirmation' };
+    })());
+
+    // No hitlEngine in context
+    await handleChatSync(makeReq({ message: 'do dangerous' }, token), res, makeCtx(db, { hitlEngine: null }));
+
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    const body = res._body();
+    expect(body.error).toMatch(/HITL engine not available/);
   });
 });

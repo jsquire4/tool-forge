@@ -7,6 +7,7 @@ import {
   detectProvider, generateAdminKey,
   loadEnv, mergeEnvFile,
   writeWidgetHtml, runInit,
+  sanitizeEnvValue, assertSafeUrl,
 } from './init.js';
 
 // ── Mock readline ───────────────────────────────────────────────────────────
@@ -137,6 +138,55 @@ describe('init — unit helpers', () => {
     });
   });
 
+  describe('sanitizeEnvValue', () => {
+    it('returns string as-is when safe', () => {
+      expect(sanitizeEnvValue('my-api-key')).toBe('my-api-key');
+      expect(sanitizeEnvValue('sk-ant-abc123')).toBe('sk-ant-abc123');
+    });
+
+    it('converts non-string values to string', () => {
+      expect(sanitizeEnvValue(42)).toBe('42');
+      expect(sanitizeEnvValue(null)).toBe('');
+    });
+
+    it('throws when value contains newline (injection rejected)', () => {
+      expect(() => sanitizeEnvValue('value\nINJECTED=evil')).toThrow(/newline/i);
+      expect(() => sanitizeEnvValue('value\rINJECTED=evil')).toThrow(/newline/i);
+      expect(() => sanitizeEnvValue('value\0null')).toThrow(/newline/i);
+    });
+  });
+
+  describe('assertSafeUrl', () => {
+    it('allows public https URLs', () => {
+      expect(() => assertSafeUrl('https://api.example.com/openapi.json')).not.toThrow();
+      expect(() => assertSafeUrl('http://api.example.com/spec')).not.toThrow();
+    });
+
+    it('blocks file:// URLs (SSRF)', () => {
+      expect(() => assertSafeUrl('file:///etc/passwd')).toThrow(/Only http/);
+    });
+
+    it('blocks localhost URLs (SSRF)', () => {
+      expect(() => assertSafeUrl('http://localhost/internal')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks 127.x loopback URLs (SSRF)', () => {
+      expect(() => assertSafeUrl('http://127.0.0.1/internal')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks 10.x private IP (SSRF)', () => {
+      expect(() => assertSafeUrl('http://10.0.0.1/internal')).toThrow(/Private|loopback/i);
+    });
+
+    it('blocks 192.168.x private IP (SSRF)', () => {
+      expect(() => assertSafeUrl('http://192.168.1.1/internal')).toThrow(/Private|loopback/i);
+    });
+
+    it('throws on invalid URL format', () => {
+      expect(() => assertSafeUrl('not-a-url')).toThrow(/Invalid URL/);
+    });
+  });
+
   describe('writeWidgetHtml', () => {
     it('contains correct port and endpoint', () => {
       const tmpDir = makeTmpDir();
@@ -248,7 +298,8 @@ describe('init — E2E flows', () => {
     expect(config.sidecar.port).toBe(8001);
     expect(config.defaultModel).toBe('claude-sonnet-4-6');
     expect(config.auth.mode).toBe('trust');
-    expect(config.adminKey).toBeTruthy();
+    // adminKey is stored as env var reference, not plaintext
+    expect(config.adminKey).toBe('${FORGE_ADMIN_KEY}');
     expect(config.agents).toHaveLength(1);
     expect(config.agents[0].id).toBe('support');
     expect(config.database.type).toBe('sqlite');
@@ -258,7 +309,8 @@ describe('init — E2E flows', () => {
     expect(existsSync(envPath)).toBe(true);
     const envContent = readFileSync(envPath, 'utf-8');
     expect(envContent).toContain('ANTHROPIC_API_KEY=sk-ant-test123');
-    expect(envContent).toContain('FORGE_ADMIN_KEY=');
+    // adminKey value (64 hex chars) is stored in .env, not in forge.config.json
+    expect(envContent).toMatch(/FORGE_ADMIN_KEY=[0-9a-f]{64}/);
 
     // Widget written
     const widgetPath = join(tmpDir, 'forge-widget.html');
@@ -391,5 +443,47 @@ describe('init — E2E flows', () => {
 
     const config = JSON.parse(readFileSync(join(tmpDir, 'forge.config.json'), 'utf-8'));
     expect(config.defaultModel).toBe('gpt-4o');
+  });
+
+  it('overwrite-accepted: answering y to overwrite writes new config', async () => {
+    // Pre-create an existing config
+    writeFileSync(join(tmpDir, 'forge.config.json'), '{"existing":true}\n', 'utf-8');
+
+    const rl = mockRl([
+      '3',           // tui
+      'sk-ant-new1',
+      '1',           // model
+      'y',           // overwrite config
+    ]);
+
+    await runInit({ projectRoot: tmpDir, rl });
+
+    const config = JSON.parse(readFileSync(join(tmpDir, 'forge.config.json'), 'utf-8'));
+    // Existing key should be gone; new config written
+    expect(config.existing).toBeUndefined();
+    expect(config.defaultModel).toBe('claude-sonnet-4-6');
+  });
+
+  it('adminKey stored in .env not forge.config.json', async () => {
+    const rl = mockRl([
+      '2',           // mode: both
+      'sk-ant-adm1',
+      '1',           // model
+      '1',           // db: sqlite
+      '1',           // auth: trust
+      '',            // discovery: skip
+      'n',           // no agent
+      'n',           // no widget
+    ]);
+
+    await runInit({ projectRoot: tmpDir, rl });
+
+    // forge.config.json should contain the placeholder, not the actual key
+    const config = JSON.parse(readFileSync(join(tmpDir, 'forge.config.json'), 'utf-8'));
+    expect(config.adminKey).toBe('${FORGE_ADMIN_KEY}');
+
+    // .env should contain the actual 64-char hex key
+    const envContent = readFileSync(join(tmpDir, '.env'), 'utf-8');
+    expect(envContent).toMatch(/FORGE_ADMIN_KEY=[0-9a-f]{64}/);
   });
 });

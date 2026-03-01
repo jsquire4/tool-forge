@@ -168,6 +168,40 @@ describe('handleChat', () => {
     expect(history[0].role).toBe('user');
   });
 
+  it('missing API key → 500 with descriptive error', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+    const ctx = makeCtx(db);
+    // Remove the API key from env so preferenceStore resolves no key
+    ctx.env = {};
+
+    await handleChat(makeReq({ message: 'hi' }, token), res, ctx);
+
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    const body = JSON.parse(res.end.mock.calls[0][0]);
+    expect(body.error).toMatch(/No API key configured/);
+  });
+
+  it('unknown agentId → 404', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+
+    // Build ctx with a minimal agentRegistry that knows no agents
+    const ctx = makeCtx(db);
+    ctx.agentRegistry = {
+      resolveAgent: () => null,
+      buildAgentConfig: (cfg) => cfg,
+      resolveSystemPrompt: () => 'You are a helpful assistant.',
+      filterTools: (tools) => tools
+    };
+
+    await handleChat(makeReq({ message: 'hi', agentId: 'nonexistent-agent' }, token), res, ctx);
+
+    expect(res.writeHead).toHaveBeenCalledWith(404, expect.any(Object));
+    const body = JSON.parse(res.end.mock.calls[0][0]);
+    expect(body.error).toMatch(/nonexistent-agent/);
+  });
+
   describe('verifier hooks', () => {
     it('registered verifier producing warn → SSE stream contains tool_warning event', async () => {
       const token = makeJwt({ sub: 'user-1' });

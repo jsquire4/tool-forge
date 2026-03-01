@@ -44,15 +44,26 @@ async function callToolEndpoint(spec, args, config, userJwt = null) {
   const queryParams = new URLSearchParams();
   const bodyObj = {};
 
+  // Validate property names before use to prevent prototype pollution
+  const SAFE_PROP_NAME = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+
   for (const [toolParam, mapping] of Object.entries(paramMap)) {
     const val = args[toolParam];
     if (val === undefined) continue;
     if (mapping.path) {
-      url = url.replace(`{${mapping.path}}`, encodeURIComponent(String(val)));
+      // Validate path param name before substituting into URL
+      if (SAFE_PROP_NAME.test(mapping.path)) {
+        url = url.replace(`{${mapping.path}}`, encodeURIComponent(String(val)));
+      }
+      // silently skip invalid path param names
     } else if (mapping.query) {
       queryParams.set(mapping.query, String(val));
     } else if (mapping.body) {
-      bodyObj[mapping.body] = val;
+      // Validate body property name to prevent prototype pollution
+      if (SAFE_PROP_NAME.test(mapping.body)) {
+        bodyObj[mapping.body] = val;
+      }
+      // silently skip invalid property names
     }
   }
 
@@ -155,7 +166,12 @@ export function createMcpServer(db, config, sidecarCtx = null) {
     const start = Date.now();
     let result;
     try {
-      result = await callToolEndpoint(spec, args, config);
+      // MCP protocol doesn't carry user JWTs; tool calls made via MCP are
+      // service-level. Pass null explicitly so it's clear this is intentional,
+      // not an accidental omission. A future transport that carries identity
+      // should extract it from sidecarCtx.session and pass it here.
+      const userJwt = null; // MCP protocol doesn't carry user JWT
+      result = await callToolEndpoint(spec, args, config, userJwt);
     } catch (err) {
       const latency_ms = Date.now() - start;
       try {

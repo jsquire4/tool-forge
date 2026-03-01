@@ -119,7 +119,7 @@ export async function handleChatSync(req, res, ctx) {
 
   // Persist user message
   try {
-    await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
+    await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id, userId);
   } catch (err) {
     process.stderr.write(`[chat-sync] Failed to persist user message: ${err.message}\n`);
   }
@@ -181,7 +181,7 @@ export async function handleChatSync(req, res, ctx) {
     for await (const event of gen) {
       switch (event.type) {
         case 'text':
-          result.message += event.content;
+          result.message = event.content;
           break;
         case 'tool_call':
           result.toolCalls.push({ id: event.id, name: event.tool, args: event.args });
@@ -197,24 +197,25 @@ export async function handleChatSync(req, res, ctx) {
         case 'hitl': {
           // Persist any text accumulated before the pause
           if (result.message) {
-            await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id);
+            await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id, userId);
           }
-          // Persist pause state via hitlEngine
+          // Require hitlEngine to persist pause state
+          if (!hitlEngine) {
+            return sendJson(res, 500, { error: 'HITL engine not available; cannot pause' });
+          }
           let resumeToken;
-          if (hitlEngine) {
-            try {
-              resumeToken = await hitlEngine.pause({
-                sessionId,
-                agentId: agent?.agent_id ?? null,
-                conversationMessages: event.conversationMessages,
-                pendingToolCalls: event.pendingToolCalls,
-                turnIndex: event.turnIndex,
-                tool: event.tool,
-                args: event.args
-              });
-            } catch (pauseErr) {
-              return sendJson(res, 500, { error: 'Failed to persist HITL state' });
-            }
+          try {
+            resumeToken = await hitlEngine.pause({
+              sessionId,
+              agentId: agent?.agent_id ?? null,
+              conversationMessages: event.conversationMessages,
+              pendingToolCalls: event.pendingToolCalls,
+              turnIndex: event.turnIndex,
+              tool: event.tool,
+              args: event.args
+            });
+          } catch (pauseErr) {
+            return sendJson(res, 500, { error: 'Failed to persist HITL state' });
           }
           return sendJson(res, 409, { resumeToken, tool: event.tool, message: event.message });
         }
@@ -232,7 +233,7 @@ export async function handleChatSync(req, res, ctx) {
   // Persist assistant message + respond
   if (result.message) {
     try {
-      await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id);
+      await conversationStore.persistMessage(sessionId, 'chat', 'assistant', result.message, agent?.agent_id, userId);
     } catch (err) {
       process.stderr.write(`[chat-sync] Failed to persist assistant message: ${err.message}\n`);
     }

@@ -7,7 +7,7 @@
  *   - init.js          (interactive: ensureDependencyInteractive)
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 /**
  * Check whether an npm package is available via dynamic import.
@@ -20,7 +20,15 @@ export async function checkDependency(packageName) {
     await import(packageName);
     return { available: true };
   } catch (err) {
-    return { available: false, error: err.message };
+    const notInstalled = err.code === 'MODULE_NOT_FOUND' ||
+      err.message?.includes('Cannot find package') ||
+      err.message?.includes('Does the file exist?') ||
+      err.message?.includes('Failed to load url');
+    return {
+      available: false,
+      error: err.message,
+      likelyCause: notInstalled ? 'not_installed' : 'broken_package'
+    };
   }
 }
 
@@ -30,7 +38,7 @@ export async function checkDependency(packageName) {
  * @param {string} packageName
  * @returns {string}
  */
-export function installHint(packageName) {
+function installHint(packageName) {
   return `npm install ${packageName}`;
 }
 
@@ -43,8 +51,13 @@ export function installHint(packageName) {
  * @returns {Promise<void>}
  */
 export async function requireDependency(packageName) {
-  const { available } = await checkDependency(packageName);
-  if (!available) {
+  const result = await checkDependency(packageName);
+  if (!result.available) {
+    if (result.likelyCause === 'broken_package') {
+      throw new Error(
+        `Package "${packageName}" is installed but failed to load: ${result.error}\nThis may be a native addon compilation issue. Try: npm rebuild ${packageName}`
+      );
+    }
     throw new Error(
       `Required package "${packageName}" is not installed. Run: ${installHint(packageName)}`
     );
@@ -74,11 +87,13 @@ export async function ensureDependencyInteractive(packageName, rl) {
   }
 
   try {
-    execSync(`npm install ${packageName}`, { stdio: 'inherit' });
+    execFileSync('npm', ['install', packageName], { stdio: 'pipe', timeout: 30000 });
     // Verify it's actually available now
     const recheck = await checkDependency(packageName);
     return recheck.available;
-  } catch {
+  } catch (err) {
+    const detail = err.stderr?.toString().trim() || err.message;
+    console.error(`  ✗ Failed to install ${packageName}: ${detail}`);
     return false;
   }
 }

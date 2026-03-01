@@ -99,6 +99,62 @@ describe('SqliteConversationStore', () => {
   it('close() resolves without error', async () => {
     await expect(store.close()).resolves.toBeUndefined();
   });
+
+  it('persistMessage stores userId in the row', async () => {
+    const sid = store.createSession();
+    await store.persistMessage(sid, 'chat', 'user', 'hello', null, 'user123');
+    const history = await store.getHistory(sid);
+    expect(history).toHaveLength(1);
+    expect(history[0].user_id).toBe('user123');
+  });
+
+  it('listSessions returns only sessions for the given userId', async () => {
+    const s1 = store.createSession();
+    const s2 = store.createSession();
+    await store.persistMessage(s1, 'chat', 'user', 'hello', null, 'user-a');
+    await store.persistMessage(s2, 'chat', 'user', 'world', null, 'user-b');
+
+    const listA = await store.listSessions('user-a');
+    expect(listA).toHaveLength(1);
+    expect(listA[0].sessionId).toBe(s1);
+    expect(listA[0].userId).toBe('user-a');
+
+    const listB = await store.listSessions('user-b');
+    expect(listB).toHaveLength(1);
+    expect(listB[0].sessionId).toBe(s2);
+    expect(listB[0].userId).toBe('user-b');
+  });
+
+  it('deleteSession with wrong userId returns false, correct userId returns true', async () => {
+    const sid = store.createSession();
+    await store.persistMessage(sid, 'chat', 'user', 'hi', null, 'owner-1');
+
+    const wrongResult = await store.deleteSession(sid, 'wrong-user');
+    expect(wrongResult).toBe(false);
+
+    // Session still accessible
+    const history = await store.getHistory(sid);
+    expect(history).toHaveLength(1);
+
+    const correctResult = await store.deleteSession(sid, 'owner-1');
+    expect(correctResult).toBe(true);
+
+    // Session is gone
+    const historyAfter = await store.getHistory(sid);
+    expect(historyAfter).toHaveLength(0);
+  });
+
+  it('getSessionUserId returns undefined for unknown session', async () => {
+    const result = await store.getSessionUserId('nonexistent-session');
+    expect(result).toBeUndefined();
+  });
+
+  it('getSessionUserId returns the userId of the first message', async () => {
+    const sid = store.createSession();
+    await store.persistMessage(sid, 'chat', 'user', 'hello', null, 'my-user');
+    const uid = await store.getSessionUserId(sid);
+    expect(uid).toBe('my-user');
+  });
 });
 
 // ── makeConversationStore factory ──────────────────────────────────────────
@@ -173,6 +229,43 @@ describe('RedisConversationStore interface', () => {
     const store = new RedisConversationStore({ url: 'redis://127.0.0.1:1' });
     await expect(store.persistMessage('sid', 'orient', 'user', 'hi')).rejects.toThrow();
   });
+
+  it('persistMessage uses multi() pipeline — exec() called once, not separate rPush/expire/sAdd', async () => {
+    // Build a mock redis client that records which methods were called
+    const calls = [];
+    const execResult = [];
+    const mockPipeline = {
+      rPush: (...args) => { calls.push(['pipeline.rPush', ...args]); return mockPipeline; },
+      expire: (...args) => { calls.push(['pipeline.expire', ...args]); return mockPipeline; },
+      sAdd: (...args) => { calls.push(['pipeline.sAdd', ...args]); return mockPipeline; },
+      sRem: (...args) => { calls.push(['pipeline.sRem', ...args]); return mockPipeline; },
+      exec: async () => { calls.push(['pipeline.exec']); return execResult; }
+    };
+    const mockClient = {
+      multi: () => { calls.push(['multi']); return mockPipeline; },
+      // These should NOT be called directly
+      rPush: async () => { calls.push(['direct.rPush']); },
+      expire: async () => { calls.push(['direct.expire']); },
+      sAdd: async () => { calls.push(['direct.sAdd']); },
+      sRem: async () => { calls.push(['direct.sRem']); }
+    };
+
+    const store = new RedisConversationStore({ url: 'redis://localhost:6379' });
+    // Bypass the real _connect by injecting the mock client
+    store._client = mockClient;
+
+    await store.persistMessage('test-session', 'chat', 'user', 'hello', null, 'u1');
+
+    // multi() must have been called
+    expect(calls.some(c => c[0] === 'multi')).toBe(true);
+    // exec() must have been called exactly once
+    expect(calls.filter(c => c[0] === 'pipeline.exec')).toHaveLength(1);
+    // No direct (non-pipelined) Redis calls should have been made
+    expect(calls.some(c => c[0] === 'direct.rPush')).toBe(false);
+    expect(calls.some(c => c[0] === 'direct.expire')).toBe(false);
+    expect(calls.some(c => c[0] === 'direct.sAdd')).toBe(false);
+    expect(calls.some(c => c[0] === 'direct.sRem')).toBe(false);
+  });
 });
 
 // ── PostgresConversationStore — interface + mock round-trip ─────────────
@@ -196,10 +289,25 @@ describe('PostgresConversationStore', () => {
             role: params[2],
             content: params[3],
             agent_id: params[4],
-            created_at: params[5],
+            user_id: params[5],
+            created_at: params[6],
           };
           rows.push(row);
-          return { rows: [] };
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('DELETE FROM')) {
+          const sid = params[0];
+          const uid = params[1];
+          const before = rows.length;
+          const toDelete = rows.filter(r => r.session_id === sid && r.user_id === uid);
+          if (toDelete.length === 0) { return { rows: [], rowCount: 0 }; }
+          // Remove matching rows in place
+          const indices = [];
+          for (let i = 0; i < rows.length; i++) {
+            if (rows[i].session_id === sid && rows[i].user_id === uid) indices.push(i);
+          }
+          for (let i = indices.length - 1; i >= 0; i--) rows.splice(indices[i], 1);
+          return { rows: [], rowCount: before - rows.length };
         }
         if (sql.includes('SELECT') && sql.includes('WHERE session_id')) {
           const sid = params[0];
@@ -207,6 +315,29 @@ describe('PostgresConversationStore', () => {
             .filter(r => r.session_id === sid)
             .sort((a, b) => a.created_at.localeCompare(b.created_at));
           return { rows: matching };
+        }
+        if (sql.includes('WHERE user_id')) {
+          // listSessions or getSessionUserId
+          const uid = params[0];
+          if (sql.includes('LIMIT 1')) {
+            // getSessionUserId
+            const match = rows.find(r => r.session_id === params[0]);
+            // Note: params[0] is session_id for LIMIT 1 form
+            return { rows: match ? [{ user_id: match.user_id }] : [] };
+          }
+          // listSessions — group by session_id
+          const matching = rows.filter(r => r.user_id === uid);
+          const groups = {};
+          for (const r of matching) {
+            if (!groups[r.session_id]) {
+              groups[r.session_id] = { session_id: r.session_id, agent_id: r.agent_id, user_id: r.user_id,
+                last_updated: r.created_at, started_at: r.created_at };
+            } else {
+              if (r.created_at > groups[r.session_id].last_updated) groups[r.session_id].last_updated = r.created_at;
+              if (r.created_at < groups[r.session_id].started_at) groups[r.session_id].started_at = r.created_at;
+            }
+          }
+          return { rows: Object.values(groups).sort((a, b) => b.last_updated.localeCompare(a.last_updated)) };
         }
         if (sql.includes('NOT IN')) {
           // getIncompleteSessions — simplified mock
@@ -234,6 +365,9 @@ describe('PostgresConversationStore', () => {
     expect(typeof store.persistMessage).toBe('function');
     expect(typeof store.getHistory).toBe('function');
     expect(typeof store.getIncompleteSessions).toBe('function');
+    expect(typeof store.listSessions).toBe('function');
+    expect(typeof store.deleteSession).toBe('function');
+    expect(typeof store.getSessionUserId).toBe('function');
     expect(typeof store.close).toBe('function');
   });
 
@@ -269,6 +403,41 @@ describe('PostgresConversationStore', () => {
 
     const sessions = await store.getIncompleteSessions();
     expect(sessions.find(s => s.session_id === sid)).toBeUndefined();
+  });
+
+  it('listSessions returns only sessions for the given userId', async () => {
+    const pool = createMockPool();
+    const store = new PostgresConversationStore(pool);
+    const s1 = store.createSession();
+    const s2 = store.createSession();
+
+    await store.persistMessage(s1, 'chat', 'user', 'hello', null, 'user-pg-1');
+    await store.persistMessage(s2, 'chat', 'user', 'world', null, 'user-pg-2');
+
+    const list1 = await store.listSessions('user-pg-1');
+    expect(list1).toHaveLength(1);
+    expect(list1[0].sessionId).toBe(s1);
+
+    const list2 = await store.listSessions('user-pg-2');
+    expect(list2).toHaveLength(1);
+    expect(list2[0].sessionId).toBe(s2);
+  });
+
+  it('deleteSession with wrong userId returns false, correct userId returns true', async () => {
+    const pool = createMockPool();
+    const store = new PostgresConversationStore(pool);
+    const sid = store.createSession();
+    await store.persistMessage(sid, 'chat', 'user', 'hello', null, 'user-pg-owner');
+
+    const wrongResult = await store.deleteSession(sid, 'wrong-user');
+    expect(wrongResult).toBe(false);
+
+    // Session still has rows — verify via pool.rows
+    expect(pool.rows.some(r => r.session_id === sid)).toBe(true);
+
+    const correctResult = await store.deleteSession(sid, 'user-pg-owner');
+    expect(correctResult).toBe(true);
+    expect(pool.rows.some(r => r.session_id === sid)).toBe(false);
   });
 
   it('close() resolves without error', async () => {

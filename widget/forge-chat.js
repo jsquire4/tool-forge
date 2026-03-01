@@ -25,6 +25,9 @@ class ForgeChat extends HTMLElement {
     this._token = null;
     this._messages = [];
     this._prefsOpen = false;
+    this._abortCtrl = null;
+    this._streaming = false;
+    this._pendingTheme = null;
     this.attachShadow({ mode: 'open' });
   }
 
@@ -33,8 +36,18 @@ class ForgeChat extends HTMLElement {
   }
 
   connectedCallback() {
-    this._token = this.getAttribute('token') || null;
+    // Security: prefer setting this._token programmatically rather than via attribute
+    // to avoid token exposure in DOM/DevTools. Strip attribute after reading.
+    const tokenAttr = this.getAttribute('token');
+    if (tokenAttr) {
+      this._token = tokenAttr;
+      this.removeAttribute('token'); // strip from DOM to reduce exposure
+    }
     this._render();
+  }
+
+  disconnectedCallback() {
+    this._abortCtrl?.abort();
   }
 
   attributeChangedCallback(name, oldVal, newVal) {
@@ -402,6 +415,57 @@ class ForgeChat extends HTMLElement {
     if (el) el.style.display = 'none';
   }
 
+  async _readSseStream(reader) {
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let assistantText = '';
+    let assistantMsgDiv = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      let eventType = null;
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && eventType) {
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            if (eventType === 'text_delta') {
+              assistantText += data.content || '';
+              if (!assistantMsgDiv) {
+                this._hideTyping();
+                assistantMsgDiv = this._addStreamingMessage();
+              }
+              this._updateStreamingMessage(assistantMsgDiv, assistantText);
+            } else if (eventType === 'text') {
+              assistantText = data.content || '';
+              if (assistantMsgDiv) {
+                this._finalizeStreamingMessage(assistantMsgDiv, assistantText);
+              }
+            } else if (eventType === 'session') {
+              this._sessionId = data.sessionId;
+            } else {
+              this._handleSSEEvent(eventType, data);
+            }
+          } catch { /* skip malformed */ }
+          eventType = null; // reset after each complete event
+        } else if (line === '') {
+          // blank line = SSE message boundary; reset eventType for next message
+          eventType = null;
+        }
+      }
+    }
+
+    return { assistantText, assistantMsgDiv };
+  }
+
   async _sendMessage() {
     const input = this.shadowRoot.getElementById('forge-input');
     const message = input.value.trim();
@@ -420,6 +484,7 @@ class ForgeChat extends HTMLElement {
     const sendBtn = this.shadowRoot.getElementById('send');
     sendBtn.disabled = true;
     this._showTyping();
+    this._streaming = true;
 
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -429,10 +494,12 @@ class ForgeChat extends HTMLElement {
       const agentAttr = this.getAttribute('agent');
       if (agentAttr) chatBody.agentId = agentAttr;
 
+      this._abortCtrl = new AbortController();
       const res = await fetch(`${endpoint}/chat`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(chatBody)
+        body: JSON.stringify(chatBody),
+        signal: this._abortCtrl.signal
       });
 
       if (!res.ok) {
@@ -442,51 +509,9 @@ class ForgeChat extends HTMLElement {
         return;
       }
 
-      // Parse SSE stream
+      // Parse SSE stream via shared helper
       const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let assistantText = '';
-      let assistantMsgDiv = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line
-
-        let eventType = null;
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ') && eventType) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (eventType === 'text_delta') {
-                assistantText += data.content || '';
-                if (!assistantMsgDiv) {
-                  this._hideTyping();
-                  assistantMsgDiv = this._addStreamingMessage();
-                }
-                this._updateStreamingMessage(assistantMsgDiv, assistantText);
-              } else if (eventType === 'text') {
-                assistantText = data.content || '';
-                if (assistantMsgDiv) {
-                  this._finalizeStreamingMessage(assistantMsgDiv, assistantText);
-                }
-              } else if (eventType === 'session') {
-                this._sessionId = data.sessionId;
-              } else {
-                this._handleSSEEvent(eventType, data);
-              }
-            } catch { /* skip malformed */ }
-            eventType = null;
-          }
-        }
-      }
+      const { assistantText, assistantMsgDiv } = await this._readSseStream(reader);
 
       this._hideTyping();
 
@@ -502,6 +527,11 @@ class ForgeChat extends HTMLElement {
       this._addMessage('assistant', `Connection error: ${err.message}`);
       this.dispatchEvent(new CustomEvent('forge:error', { detail: { message: err.message } }));
     } finally {
+      this._streaming = false;
+      if (this._pendingTheme != null) {
+        this._applyTheme(this._pendingTheme);
+        this._pendingTheme = null;
+      }
       sendBtn.disabled = false;
       input.focus();
     }
@@ -569,12 +599,25 @@ class ForgeChat extends HTMLElement {
     if (confirmed) this._showTyping();
 
     try {
-      await fetch(`${endpoint}/chat/resume`, {
+      const res = await fetch(`${endpoint}/chat/resume`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ resumeToken, confirmed })
       });
+
+      // Read the SSE response — resumed agent continues streaming
+      if (res.ok && res.body) {
+        const reader = res.body.getReader();
+        const { assistantText } = await this._readSseStream(reader);
+        this._hideTyping();
+        if (assistantText) {
+          this.dispatchEvent(new CustomEvent('forge:message', { detail: { role: 'assistant', content: assistantText } }));
+        }
+      } else {
+        this._hideTyping();
+      }
     } catch (err) {
+      this._hideTyping();
       this.dispatchEvent(new CustomEvent('forge:error', { detail: { message: err.message } }));
     }
   }
@@ -634,7 +677,10 @@ class ForgeChat extends HTMLElement {
           <label>
             Confirmation level
             <select id="pref-hitl">
-              ${hitlLevels.map(l => `<option value="${l}" ${l === currentHitl ? 'selected' : ''}>${l}</option>`).join('')}
+              ${hitlLevels.map(l => {
+                const safe = this._escapeHtml(l);
+                return `<option value="${safe}" ${l === currentHitl ? 'selected' : ''}>${safe}</option>`;
+              }).join('')}
             </select>
           </label>
         ` : `<p class="perm-note">HITL level disabled by admin</p>`}
@@ -716,7 +762,12 @@ class ForgeChat extends HTMLElement {
   }
 
   _applyTheme(theme) {
-    if (this.isConnected) this._render();
+    if (!this.isConnected) return;
+    if (this._streaming) {
+      this._pendingTheme = theme; // queue it — apply after stream completes
+      return;
+    }
+    this._render();
   }
 }
 

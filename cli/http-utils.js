@@ -45,6 +45,20 @@ export function sendJson(res, statusCode, body) {
 }
 
 /**
+ * Extract a JWT from an HTTP request.
+ * Checks Authorization: Bearer <token> first, then falls back to ?token= query param.
+ * @param {import('http').IncomingMessage} req
+ * @returns {string|null}
+ */
+export function extractJwt(req) {
+  const auth = req.headers.authorization ?? '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7) || null;
+  try {
+    return new URL(req.url, 'http://localhost').searchParams.get('token') || null;
+  } catch { return null; }
+}
+
+/**
  * Load promoted tools from the tool registry and convert to LLM-format tool defs.
  * @param {import('better-sqlite3').Database} db
  * @param {string|string[]} [allowlist='*'] — '*' for all, or array of tool_names to include

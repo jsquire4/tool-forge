@@ -31,6 +31,7 @@ export function httpsPost(hostname, path, headers, body, timeoutMs = 60_000) {
       },
       (resp) => {
         let data = '';
+        resp.on('error', rej);
         resp.on('data', (d) => { data += d; });
         resp.on('end', () => res({ status: resp.statusCode, body: data }));
       }
@@ -383,7 +384,8 @@ export function detectProvider(model) {
   if (
     model.startsWith('gpt-') ||
     model.startsWith('o1') ||
-    model.startsWith('o3')
+    model.startsWith('o3') ||
+    model.startsWith('o4')
   ) return 'openai';
   // Fallback: assume anthropic for unknown model names
   return 'anthropic';
@@ -478,6 +480,7 @@ export function httpsPostStream(hostname, path, headers, body, timeoutMs = 120_0
         headers: { ...headers, 'Content-Length': Buffer.byteLength(payload) }
       },
       (resp) => {
+        resp.on('error', rej);
         if (resp.statusCode >= 200 && resp.statusCode < 300) {
           res(resp);
         } else {
@@ -585,7 +588,8 @@ export async function* parseAnthropicStream(stream) {
     }
 
     if (eventType === 'content_block_stop') {
-      // Reset current text index tracking on block end
+      // Reset current text index so subsequent text blocks start fresh
+      currentTextIndex = -1;
     }
 
     if (eventType === 'message_delta') {

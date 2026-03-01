@@ -39,14 +39,15 @@ function loadConfig() {
 
 /**
  * Returns true if the user needs to go through onboarding:
- * - No API key in .env AND no API key in environment variables
+ * - No API key in .env AND no API key in environment variables AND no key in config
  */
 function needsOnboarding(config) {
   const projectRoot = findProjectRoot();
   const envPath = resolve(projectRoot, '.env');
 
   // Check process env first
-  if (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) return false;
+  if (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY ||
+      process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY) return false;
 
   // Check .env file
   if (existsSync(envPath)) {
@@ -54,7 +55,19 @@ function needsOnboarding(config) {
       const envText = readFileSync(envPath, 'utf-8');
       if (/ANTHROPIC_API_KEY\s*=\s*\S/.test(envText)) return false;
       if (/OPENAI_API_KEY\s*=\s*\S/.test(envText)) return false;
+      if (/GOOGLE_API_KEY\s*=\s*\S/.test(envText)) return false;
+      if (/GEMINI_API_KEY\s*=\s*\S/.test(envText)) return false;
     } catch (_) { /* ignore */ }
+  }
+
+  // Check config object for configured credentials
+  if (config?.auth?.signingKey && typeof config.auth.signingKey === 'string' &&
+      config.auth.signingKey.trim() && !config.auth.signingKey.startsWith('${')) {
+    return false;
+  }
+  if (config?.adminKey && typeof config.adminKey === 'string' &&
+      config.adminKey.trim() && !config.adminKey.startsWith('${')) {
+    return false;
   }
 
   return true; // No key found anywhere
@@ -75,8 +88,12 @@ async function main() {
 
   if (manualOnly) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const endpoint = await addEndpointManually(rl);
-    rl.close();
+    let endpoint;
+    try {
+      endpoint = await addEndpointManually(rl);
+    } finally {
+      rl.close();
+    }
 
     const projectRoot = findProjectRoot();
     let config;

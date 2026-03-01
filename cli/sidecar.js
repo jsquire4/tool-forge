@@ -11,14 +11,11 @@
  */
 
 import { createServer as createHttpServer } from 'http';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { resolve } from 'path';
 import { getDb } from './db.js';
 import { mergeDefaults, validateConfig } from './config-schema.js';
 import { buildSidecarContext, createSidecarRouter } from './forge-service.js';
 import { createDriftMonitor } from './drift-background.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Create a fully configured sidecar instance.
@@ -45,14 +42,15 @@ export async function createSidecar(config = {}, options = {}) {
     widgetDir,
   } = options;
 
-  // Validate config before proceeding
-  const { valid, errors } = validateConfig(config);
+  // Merge defaults first so validateConfig sees a fully-populated object (M1).
+  // Validating the raw user config risks false positives on missing-but-defaulted
+  // fields (e.g. auth.mode absent in raw → would fail "must be one of" if
+  // validateConfig checked before defaults were applied).
+  const merged = mergeDefaults(config);
+  const { valid, errors } = validateConfig(merged);
   if (!valid) {
     throw new Error(`Invalid sidecar config: ${errors.join('; ')}`);
   }
-
-  // Merge defaults into user config
-  const merged = mergeDefaults(config);
 
   // Initialize database with WAL mode
   const db = getDb(dbPath);
@@ -83,8 +81,14 @@ export async function createSidecar(config = {}, options = {}) {
     driftMonitor.start();
   }
 
+  // One-time guard to prevent double teardown if close() is called twice (M2).
+  let _closing = false;
+
   // close() tears down everything cleanly
   function close() {
+    if (_closing) return Promise.resolve();
+    _closing = true;
+
     if (driftMonitor) {
       driftMonitor.stop();
       driftMonitor = null;
@@ -96,15 +100,19 @@ export async function createSidecar(config = {}, options = {}) {
       try { db.close(); } catch { /* already closed */ }
     }
 
-    return new Promise((resolve) => {
-      server.close(async () => {
+    return new Promise((res) => {
+      let resolved = false;
+      const finish = async () => {
+        if (resolved) return;
+        resolved = true;
         await teardownConnections();
-        resolve();
-      });
-      // Force-close after 2s if connections linger
-      setTimeout(async () => {
-        await teardownConnections();
-        resolve();
+        res();
+      };
+      server.close(() => finish());
+      // Force-exit after 2s if connections linger — do NOT call teardown again
+      // here to avoid double-close of Redis/Postgres/SQLite (M2).
+      setTimeout(() => {
+        if (!resolved) { resolved = true; process.exit(0); }
       }, 2000);
     });
   }

@@ -24,13 +24,16 @@ function makeReq(method, path, body = {}, adminKey = 'test-admin-key') {
 
 function makeRes() {
   let body;
+  const extraHeaders = {};
   return {
-    writeHead: (code, headers) => { body = { statusCode: code }; },
+    setHeader: (name, value) => { extraHeaders[name.toLowerCase()] = value; },
+    writeHead: (code, _headers) => { body = { statusCode: code }; },
     end: (data) => {
       try { body.data = JSON.parse(data); } catch { body.data = data; }
     },
     get statusCode() { return body?.statusCode; },
     get body() { return body?.data; },
+    getHeader: (name) => extraHeaders[name.toLowerCase()],
     _getResponse() { return body; }
   };
 }
@@ -60,10 +63,10 @@ describe('handleAgents', () => {
     expect(res.statusCode).toBe(503);
   });
 
-  it('returns 403 with wrong adminKey', async () => {
+  it('returns 401 with wrong adminKey', async () => {
     const res = makeRes();
     await handleAgents(makeReq('GET', '/forge-admin/agents', {}, 'wrong-key'), res, ctx);
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
   });
 
   it('GET /forge-admin/agents — returns empty list', async () => {
@@ -241,5 +244,24 @@ describe('handleAgents', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.display_name).toBe('Admin Edit');
     expect(res.body.seeded_from_config).toBe(0);
+  });
+
+  it('malformed agentId returns 400, not 404 with script in message', async () => {
+    const maliciousId = '<script>alert(1)</script>';
+    const res = makeRes();
+    await handleAgents(makeReq('GET', `/forge-admin/agents/${encodeURIComponent(maliciousId)}`), res, ctx);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('Invalid agent ID format');
+  });
+
+  it('missing admin auth returns 401 with WWW-Authenticate header', async () => {
+    const res = makeRes();
+    await handleAgents(
+      makeReq('GET', '/forge-admin/agents', {}, null),
+      res,
+      ctx
+    );
+    expect(res.statusCode).toBe(401);
+    expect(res.getHeader('www-authenticate')).toBe('Bearer');
   });
 });

@@ -237,6 +237,115 @@ describe('reactLoop', () => {
     expect(events[0].type).toBe('error');
     expect(events[0].message).toContain('API down');
   });
+
+  it('Anthropic multi-turn: tool result appended as user content with tool_result blocks', async () => {
+    const db = makeTestDb();
+    upsertToolRegistry(db, {
+      tool_name: 'lookup',
+      spec_json: JSON.stringify({
+        name: 'lookup',
+        mcpRouting: { endpoint: '/api/lookup', method: 'GET', paramMap: {} }
+      }),
+      lifecycle_state: 'promoted'
+    });
+
+    // Turn 1: returns a tool call
+    llmTurn.mockResolvedValueOnce({
+      text: 'Let me look that up.',
+      toolCalls: [{ id: 'tc-ant-1', name: 'lookup', input: { q: 'test' } }],
+      usage: { input_tokens: 5, output_tokens: 10 }
+    });
+    // Turn 2: final text after tool result
+    llmTurn.mockResolvedValueOnce({
+      text: 'Here is the result.',
+      toolCalls: [],
+      usage: { input_tokens: 15, output_tokens: 20 }
+    });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true, status: 200,
+      text: () => Promise.resolve(JSON.stringify({ data: 'found' }))
+    });
+
+    await collectEvents(reactLoop(baseOpts({
+      provider: 'anthropic',
+      db,
+      forgeConfig: { api: { baseUrl: 'http://localhost:3000' } }
+    })));
+
+    // Inspect the messages array passed to the second llmTurn call
+    const secondCallMessages = llmTurn.mock.calls[1][0].messages;
+    // secondCallMessages: [initial user msg, assistant tool_use msg, user tool_result msg]
+    const assistantMsg = secondCallMessages[1];
+    const toolResultMsg = secondCallMessages[2];
+
+    // Anthropic assistant message should use content array with tool_use block
+    expect(assistantMsg.role).toBe('assistant');
+    expect(Array.isArray(assistantMsg.content)).toBe(true);
+    expect(assistantMsg.content.some(b => b.type === 'tool_use' && b.id === 'tc-ant-1')).toBe(true);
+
+    // Anthropic tool result should be a user message with tool_result blocks
+    expect(toolResultMsg.role).toBe('user');
+    expect(Array.isArray(toolResultMsg.content)).toBe(true);
+    expect(toolResultMsg.content[0].type).toBe('tool_result');
+    expect(toolResultMsg.content[0].tool_use_id).toBe('tc-ant-1');
+
+    global.fetch = undefined;
+  });
+
+  it('OpenAI multi-turn: tool result appended as separate tool role messages', async () => {
+    const db = makeTestDb();
+    upsertToolRegistry(db, {
+      tool_name: 'search',
+      spec_json: JSON.stringify({
+        name: 'search',
+        mcpRouting: { endpoint: '/api/search', method: 'GET', paramMap: {} }
+      }),
+      lifecycle_state: 'promoted'
+    });
+
+    // Turn 1: returns a tool call
+    llmTurn.mockResolvedValueOnce({
+      text: '',
+      toolCalls: [{ id: 'tc-oai-1', name: 'search', input: { query: 'hello' } }],
+      usage: { input_tokens: 5, output_tokens: 10 }
+    });
+    // Turn 2: final text after tool result
+    llmTurn.mockResolvedValueOnce({
+      text: 'Search complete.',
+      toolCalls: [],
+      usage: { input_tokens: 15, output_tokens: 20 }
+    });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true, status: 200,
+      text: () => Promise.resolve(JSON.stringify({ results: [] }))
+    });
+
+    await collectEvents(reactLoop(baseOpts({
+      provider: 'openai',
+      db,
+      forgeConfig: { api: { baseUrl: 'http://localhost:3000' } }
+    })));
+
+    // Inspect the messages array passed to the second llmTurn call
+    const secondCallMessages = llmTurn.mock.calls[1][0].messages;
+    // secondCallMessages: [initial user msg, assistant with tool_calls, tool role message]
+    const assistantMsg = secondCallMessages[1];
+    const toolMsg = secondCallMessages[2];
+
+    // OpenAI assistant message should have tool_calls array (not content array)
+    expect(assistantMsg.role).toBe('assistant');
+    expect(Array.isArray(assistantMsg.tool_calls)).toBe(true);
+    expect(assistantMsg.content).toBeNull();
+
+    // OpenAI tool result should be a separate message with role: 'tool'
+    expect(toolMsg.role).toBe('tool');
+    expect(toolMsg.tool_call_id).toBe('tc-oai-1');
+    expect(typeof toolMsg.content).toBe('string');
+
+    global.fetch = undefined;
+  });
 });
 
 describe('executeToolCall', () => {

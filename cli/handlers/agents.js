@@ -15,7 +15,7 @@
 import { authenticateAdmin } from '../auth.js';
 import { readBody, sendJson } from '../http-utils.js';
 
-const AGENT_ID_RE = /^[a-z0-9_-]+$/;
+const AGENT_ID_RE = /^[a-z0-9_-]{1,64}$/;
 const VALID_HITL_LEVELS = new Set(['autonomous', 'cautious', 'standard', 'paranoid']);
 
 /**
@@ -34,7 +34,8 @@ export async function handleAgents(req, res, ctx) {
   }
   const authResult = authenticateAdmin(req, adminKey);
   if (!authResult.authenticated) {
-    sendJson(res, 403, { error: authResult.error ?? 'Forbidden' });
+    res.setHeader('WWW-Authenticate', 'Bearer');
+    sendJson(res, 401, { error: 'Unauthorized' });
     return;
   }
 
@@ -49,6 +50,11 @@ export async function handleAgents(req, res, ctx) {
   // pathParts: ['forge-admin', 'agents', agentId?, 'set-default'?]
   const agentId = pathParts[2] || null;
   const action = pathParts[3] || null;
+
+  if (agentId && !AGENT_ID_RE.test(agentId)) {
+    sendJson(res, 400, { error: 'Invalid agent ID format' });
+    return;
+  }
 
   // POST /forge-admin/agents/:agentId/set-default
   if (req.method === 'POST' && agentId && action === 'set-default') {
@@ -115,9 +121,8 @@ export async function handleAgents(req, res, ctx) {
       return;
     }
 
-    // Merge: existing values as base, body overrides. Mark as admin-edited.
-    const row = bodyToRow({ ...rowToBody(existing), ...body, id: agentId });
-    row.seeded_from_config = 0;
+    // Merge: existing values as base, body overrides. Mark as admin-edited (seeded_from_config=0).
+    const row = bodyToRow({ ...rowToBody(existing), ...body, id: agentId, seeded_from_config: 0 });
     agentRegistry.upsertAgent(row);
     sendJson(res, 200, agentRegistry.getAgent(agentId));
     return;
@@ -192,7 +197,8 @@ function bodyToRow(body) {
     max_turns: body.maxTurns ?? null,
     max_tokens: body.maxTokens ?? null,
     is_default: body.isDefault ? 1 : 0,
-    enabled: body.enabled !== undefined ? (body.enabled ? 1 : 0) : 1
+    enabled: body.enabled !== undefined ? (body.enabled ? 1 : 0) : 1,
+    seeded_from_config: body.seeded_from_config ?? 0,
   };
 }
 

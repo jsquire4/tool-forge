@@ -15,10 +15,21 @@ describe('config-schema', () => {
     });
 
     it('overrides scalar values', () => {
-      const config = mergeDefaults({ defaultModel: 'gpt-4o', adminKey: 'secret' });
+      const config = mergeDefaults({ defaultModel: 'gpt-4o', adminKey: 'secret', auth: { mode: 'trust' } });
       expect(config.defaultModel).toBe('gpt-4o');
       expect(config.adminKey).toBe('secret');
-      // defaults still present
+      // explicitly set to trust
+      expect(config.auth.mode).toBe('trust');
+    });
+
+    it('mergeDefaults(null) does not throw and returns defaults', () => {
+      const config = mergeDefaults(null);
+      expect(config.auth.mode).toBe('trust');
+      expect(config.defaultModel).toBe('claude-sonnet-4-6');
+    });
+
+    it('auth.mode defaults to "trust" (zero-config safe default)', () => {
+      const config = mergeDefaults({});
       expect(config.auth.mode).toBe('trust');
     });
 
@@ -107,6 +118,15 @@ describe('config-schema', () => {
     it('passes with empty/undefined config', () => {
       expect(validateConfig({}).valid).toBe(true);
       expect(validateConfig().valid).toBe(true);
+    });
+
+    it('startup validation fails when sidecar enabled + verify mode + no signingKey', () => {
+      const { valid, errors } = validateConfig({
+        sidecar: { enabled: true },
+        auth: { mode: 'verify' },
+      });
+      expect(valid).toBe(false);
+      expect(errors.some(e => e.includes('signingKey') && e.includes('sidecar'))).toBe(true);
     });
   });
 });

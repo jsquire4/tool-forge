@@ -31,6 +31,7 @@ const VALID_DB_TYPES = ['sqlite', 'postgres'];
  * @returns {object} merged config with all defaults filled in
  */
 export function mergeDefaults(raw = {}) {
+  if (raw == null) raw = {};
   return deepMerge(CONFIG_DEFAULTS, raw);
 }
 
@@ -68,6 +69,11 @@ export function validateConfig(raw = {}) {
   // auth.mode = 'verify' requires signingKey
   if (raw.auth?.mode === 'verify' && !raw.auth?.signingKey) {
     errors.push('auth.signingKey is required when auth.mode is "verify"');
+  }
+
+  // Startup validation: sidecar enabled + verify mode + no signingKey
+  if (raw.sidecar?.enabled && raw.auth?.mode === 'verify' && !raw.auth?.signingKey) {
+    errors.push('auth.signingKey is required when auth.mode is "verify" and sidecar is enabled. Set FORGE_JWT_KEY in .env');
   }
 
   // defaultHitlLevel

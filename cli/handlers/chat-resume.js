@@ -17,7 +17,7 @@
 
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
-import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
+import { readBody, sendJson, loadPromotedTools, extractJwt } from '../http-utils.js';
 
 /**
  * @param {import('http').IncomingMessage} req
@@ -47,31 +47,29 @@ export async function handleChatResume(req, res, ctx) {
     return;
   }
 
-  // 3. Retrieve paused state
+  // 3. Check hitlEngine exists
   if (!hitlEngine) {
-    sendJson(res, 501, { error: 'HITL engine not initialized' });
+    sendJson(res, 501, { error: 'HITL engine not available' });
     return;
   }
 
-  const pausedState = await hitlEngine.resume(body.resumeToken);
-  if (!pausedState) {
-    sendJson(res, 410, { error: 'Resume token expired or invalid' });
-    return;
-  }
-
-  // 4. If rejected, return cancellation
-  if (!body.confirmed) {
+  // 4. Check confirmed FIRST before consuming the token
+  if (body.confirmed !== true) {
     sendJson(res, 200, { message: 'Cancelled' });
     return;
   }
 
-  // 5. Recover agent from pause state (graceful degradation if agent gone)
+  // 5. NOW consume the pause state
+  const pausedState = await hitlEngine.resume(body.resumeToken);
+  if (!pausedState) {
+    sendJson(res, 404, { error: 'Resume token not found or expired' });
+    return;
+  }
+
+  // 6. Recover agent from pause state (graceful degradation if agent gone)
   const { preferenceStore, promptStore, conversationStore, db, config, env, agentRegistry } = ctx;
   const userId = authResult.userId;
-  let userJwt = (req.headers.authorization ?? '').slice(7) || null;
-  if (!userJwt && req.url) {
-    try { userJwt = new URL(req.url, 'http://localhost').searchParams.get('token') || null; } catch { /* malformed URL */ }
-  }
+  const userJwt = extractJwt(req);
 
   let agent = null;
   if (agentRegistry && pausedState.agentId) {
@@ -155,7 +153,7 @@ export async function handleChatResume(req, res, ctx) {
       if (event.type === 'hitl' && hitlEngine) {
         if (assistantText && pausedState.sessionId) {
           try {
-            await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+            await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId, userId);
           } catch (err) {
             process.stderr.write(`[chat-resume] Failed to persist partial assistant message: ${err.message}\n`);
           }
@@ -184,7 +182,7 @@ export async function handleChatResume(req, res, ctx) {
       if (event.type === 'text') assistantText = event.content;
       if (event.type === 'done' && assistantText && pausedState.sessionId) {
         try {
-          await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId);
+          await conversationStore.persistMessage(pausedState.sessionId, 'chat', 'assistant', assistantText, agent?.agent_id ?? pausedState.agentId, userId);
         } catch (err) {
           process.stderr.write(`[chat-resume] Failed to persist assistant message: ${err.message}\n`);
         }

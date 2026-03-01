@@ -225,6 +225,16 @@ export function getDb(dbPath) {
   } catch (err) {
     if (!err.message.includes('duplicate column name')) throw err;
   }
+  // Migrate: add user_id to conversations
+  try {
+    db.exec('ALTER TABLE conversations ADD COLUMN user_id TEXT');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) throw err;
+  }
+  // Add index for user_id lookups
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, created_at)');
+  } catch { /* may already exist */ }
   // Migrate: add input_tokens to eval_run_cases
   try {
     db.exec('ALTER TABLE eval_run_cases ADD COLUMN input_tokens INTEGER');

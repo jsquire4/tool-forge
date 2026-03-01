@@ -14,7 +14,7 @@
 
 import { initSSE } from '../sse.js';
 import { reactLoop } from '../react-engine.js';
-import { readBody, sendJson, loadPromotedTools } from '../http-utils.js';
+import { readBody, sendJson, loadPromotedTools, extractJwt } from '../http-utils.js';
 
 /**
  * @param {import('http').IncomingMessage} req
@@ -31,10 +31,7 @@ export async function handleChat(req, res, ctx) {
     return;
   }
   const userId = authResult.userId;
-  let userJwt = (req.headers.authorization ?? '').slice(7) || null;
-  if (!userJwt && req.url) {
-    try { userJwt = new URL(req.url, 'http://localhost').searchParams.get('token') || null; } catch { /* malformed URL */ }
-  }
+  const userJwt = extractJwt(req);
 
   // 2. Parse body
   let body;
@@ -98,7 +95,7 @@ export async function handleChat(req, res, ctx) {
 
   // Persist user message
   try {
-    await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id);
+    await conversationStore.persistMessage(sessionId, 'chat', 'user', body.message, agent?.agent_id, userId);
   } catch (err) {
     process.stderr.write(`[chat] Failed to persist user message: ${err.message}\n`);
   }
@@ -168,7 +165,7 @@ export async function handleChat(req, res, ctx) {
       // HITL fix: intercept hitl events, persist partial text, persist pause state, attach resumeToken
       if (event.type === 'hitl' && hitlEngine) {
         if (assistantText) {
-          await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id);
+          await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id, userId);
         }
         const resumeToken = await hitlEngine.pause({
           sessionId,
@@ -201,7 +198,7 @@ export async function handleChat(req, res, ctx) {
 
       // Persist on completion
       if (event.type === 'done' && assistantText) {
-        await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id);
+        await conversationStore.persistMessage(sessionId, 'chat', 'assistant', assistantText, agent?.agent_id, userId);
       }
     }
   } catch (err) {

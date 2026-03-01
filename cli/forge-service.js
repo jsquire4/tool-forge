@@ -20,8 +20,8 @@
 
 import { createServer } from 'net';
 import { createServer as createHttpServer } from 'http';
-import { writeFileSync, unlinkSync, existsSync, readFileSync, realpathSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { writeFileSync, unlinkSync, existsSync, readFileSync, realpathSync, statSync } from 'fs';
+import { resolve, dirname, sep } from 'path';
 import { timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
@@ -87,7 +87,15 @@ export async function buildSidecarContext(config, db, env = {}) {
     const pg = await import('pg');
     const Pool = pg.default?.Pool ?? pg.Pool;
     const rawUrl = config?.database?.url;
-    const connStr = rawUrl?.startsWith('${') ? env[rawUrl.slice(2, -1)] : rawUrl;
+    let connStr = rawUrl;
+    if (rawUrl?.startsWith('${') && rawUrl.endsWith('}')) {
+      const SAFE_ENV_VAR_NAME = /^[A-Z_][A-Z0-9_]*$/;
+      const varName = rawUrl.slice(2, -1);
+      if (!SAFE_ENV_VAR_NAME.test(varName)) {
+        throw new Error(`Invalid env var reference in config: "\${${varName}}" — only uppercase letters, digits, and underscores allowed`);
+      }
+      connStr = env[varName];
+    }
     pgPool = new Pool({ connectionString: connStr ?? undefined });
   }
 
@@ -96,6 +104,56 @@ export async function buildSidecarContext(config, db, env = {}) {
   const verifierRunner = new VerifierRunner(db, config);
   const agentRegistry = makeAgentRegistry(config, db);
   return { auth, promptStore, preferenceStore, conversationStore, hitlEngine, verifierRunner, agentRegistry, db, config, env, _redisClient: redisClient, _pgPool: pgPool };
+}
+
+/**
+ * Serve a static file from the widget directory.
+ * Validates the resolved path stays within widgetDir to prevent path traversal.
+ * Shared by createSidecarRouter and createDirectServer (M11 — no duplication).
+ *
+ * @param {import('http').IncomingMessage} req
+ * @param {import('http').ServerResponse} res
+ * @param {string} widgetDir — absolute path to the widget directory
+ * @param {function} errorFn — send-error helper: (res, status, body) => void
+ */
+function serveWidgetFile(req, res, widgetDir, errorFn) {
+  const urlPath = new URL(req.url, 'http://localhost').pathname;
+  const relativePath = urlPath.replace(/^\/widget\//, '');
+  if (!relativePath || relativePath.includes('..')) {
+    errorFn(res, 400, { error: 'Invalid path' });
+    return;
+  }
+  const filePath = resolve(widgetDir, relativePath);
+  try {
+    const realPath = realpathSync(filePath);
+    const realWidget = realpathSync(widgetDir);
+    if (!realPath.startsWith(realWidget + sep)) {
+      errorFn(res, 403, { error: 'Forbidden' });
+      return;
+    }
+    const content = readFileSync(realPath);
+    const ext = realPath.split('.').pop();
+    const mimeTypes = {
+      js: 'application/javascript',
+      css: 'text/css',
+      html: 'text/html',
+      json: 'application/json',
+      svg: 'image/svg+xml',
+      png: 'image/png',
+      ico: 'image/x-icon',
+    };
+    const mtime = statSync(realPath).mtime.toUTCString();
+    res.writeHead(200, {
+      'Content-Type': mimeTypes[ext] ?? 'application/octet-stream',
+      'Content-Length': content.length,
+      'Cache-Control': 'public, max-age=3600',
+      'ETag': `"${mtime}"`,
+    });
+    res.end(content);
+  } catch (err) {
+    if (err.code === 'ENOENT') { errorFn(res, 404, { error: 'Not found' }); return; }
+    errorFn(res, 500, { error: 'Internal error' });
+  }
 }
 
 /**
@@ -144,6 +202,7 @@ export function createSidecarRouter(ctx, options = {}) {
     if (sidecarPath === '/agent-api/user/preferences') {
       if (req.method === 'GET') return handleGetPreferences(req, res, ctx);
       if (req.method === 'PUT') return handlePutPreferences(req, res, ctx);
+      else { sendJson(res, 405, { error: 'Method not allowed' }); return; }
     }
     if (sidecarPath.startsWith('/agent-api/conversations')) {
       return handleConversations(req, res, ctx);
@@ -160,30 +219,7 @@ export function createSidecarRouter(ctx, options = {}) {
 
     // ── Widget static file serving ─────────────────────────────────────────
     if (url.pathname.startsWith('/widget/')) {
-      const relativePath = url.pathname.slice('/widget/'.length);
-      const filePath = resolve(widgetDir, relativePath);
-      if (!existsSync(filePath)) {
-        sendJson(res, 404, { error: 'not found' });
-        return;
-      }
-      let realPath, realWidgetDirPath;
-      try {
-        realPath = realpathSync(filePath);
-        realWidgetDirPath = realpathSync(widgetDir);
-      } catch {
-        sendJson(res, 404, { error: 'not found' });
-        return;
-      }
-      if (!realPath.startsWith(realWidgetDirPath)) {
-        sendJson(res, 404, { error: 'not found' });
-        return;
-      }
-      const ext = filePath.split('.').pop();
-      const MIME_TYPES = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' };
-      const mime = MIME_TYPES[ext] || 'application/octet-stream';
-      const content = readFileSync(realPath);
-      res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'Cache-Control': 'public, max-age=3600' });
-      res.end(content);
+      serveWidgetFile(req, res, widgetDir, sendJson);
       return;
     }
 
@@ -237,6 +273,9 @@ function loadDotEnv(envPath) {
     if ((val.startsWith('"') && val.endsWith('"')) ||
         (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
+    } else {
+      // Strip inline comments (# preceded by space) for unquoted values
+      val = val.split(/\s+#/)[0].trim();
     }
     out[key] = val;
   }
@@ -436,6 +475,7 @@ function createDirectServer() {
       if (sidecarPath === '/agent-api/user/preferences') {
         if (req.method === 'GET') return handleGetPreferences(req, res, sidecarCtx);
         if (req.method === 'PUT') return handlePutPreferences(req, res, sidecarCtx);
+        else { json(res, 405, { error: 'Method not allowed' }); return; }
       }
       if (sidecarPath.startsWith('/agent-api/conversations')) {
         return handleConversations(req, res, sidecarCtx);
@@ -453,25 +493,9 @@ function createDirectServer() {
 
     // ── Widget static file serving ───────────────────────────────────────────
     if (url.pathname.startsWith('/widget/')) {
-      const relativePath = url.pathname.slice('/widget/'.length);
-      const widgetDir = resolve(PROJECT_ROOT, 'widget');
-      const filePath = resolve(widgetDir, relativePath);
-      if (!existsSync(filePath)) {
-        json(res, 404, { error: 'not found' });
-        return;
-      }
-      const realPath = realpathSync(filePath);
-      const realWidgetDir = realpathSync(widgetDir);
-      if (!realPath.startsWith(realWidgetDir)) {
-        json(res, 404, { error: 'not found' });
-        return;
-      }
-      const ext = filePath.split('.').pop();
-      const MIME_TYPES = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' };
-      const mime = MIME_TYPES[ext] || 'application/octet-stream';
-      const content = readFileSync(realPath);
-      res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'Cache-Control': 'public, max-age=3600' });
-      res.end(content);
+      const directWidgetDir = resolve(PROJECT_ROOT, 'widget');
+      // Use json() as the error helper since createDirectServer uses its own json()
+      serveWidgetFile(req, res, directWidgetDir, (r, status, body) => json(r, status, body));
       return;
     }
 
@@ -490,6 +514,10 @@ function shutdown() {
   waiters.length = 0;
   removeLock();
   server.close(() => process.exit(0));
+  // Force-close lingering keep-alive connections (Node 18.2.0+)
+  if (typeof server.closeAllConnections === 'function') {
+    server.closeAllConnections();
+  }
   setTimeout(() => process.exit(0), 2000);
 }
 
@@ -515,72 +543,88 @@ async function main() {
     : await getPort();
   const bindHost = sidecarMode ? '0.0.0.0' : '127.0.0.1';
 
+  // Load .env and initialize DB/sidecar context BEFORE server.listen() so that
+  // any async errors (Redis connect, bad config, etc.) propagate to main().catch()
+  // rather than being swallowed inside the listen callback (M10).
+  const envFile = loadDotEnv(resolve(PROJECT_ROOT, '.env'));
+  const env = { ...process.env, ...envFile };
+
+  // FORGE_MCP_KEY: check .env file first, then process.env
+  // Empty string is treated as unset (fail-closed)
+  const rawKey = envFile.FORGE_MCP_KEY ?? process.env.FORGE_MCP_KEY ?? '';
+  forgeMcpKey = rawKey.trim() || null;
+
+  // Initialize DB; if it fails, log and continue without MCP
+  try {
+    const dbPath = resolve(PROJECT_ROOT, config.dbPath || 'forge.db');
+    mcpDb = getDb(dbPath);
+    mcpConfig = config;
+    process.stdout.write('[forge-service] MCP server initialized\n');
+
+    // Build sidecar context using the exported function (async — awaited here
+    // inside main() so unhandled-rejection is impossible)
+    sidecarCtx = await buildSidecarContext(config, mcpDb, env);
+
+    // Seed agents from config.agents[] if defined
+    try {
+      sidecarCtx.agentRegistry.seedFromConfig();
+      const allAgents = sidecarCtx.agentRegistry.getAllAgents();
+      if (allAgents.length > 0) {
+        process.stdout.write(`[forge-service] Agent registry seeded: ${allAgents.length} agent(s)\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`[forge-service] Agent seeding failed: ${err.message}\n`);
+    }
+    process.stdout.write('[forge-service] Sidecar context initialized\n');
+  } catch (err) {
+    process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);
+    mcpDb = null;
+    mcpConfig = null;
+  }
+
+  // In sidecar mode: disable watchdog, enable WAL, start drift monitor
+  if (sidecarMode) {
+    clearInterval(watchdog);
+    if (mcpDb) {
+      try {
+        mcpDb.pragma('journal_mode = WAL');
+        process.stdout.write('[forge-service] SQLite WAL mode enabled\n');
+      } catch (err) {
+        process.stderr.write(`[forge-service] WAL mode failed: ${err.message}\n`);
+      }
+      const driftMonitor = createDriftMonitor(config, mcpDb);
+      driftMonitor.start();
+      process.stdout.write('[forge-service] Background drift monitor started\n');
+    }
+  }
+
+  // Now start listening — callback is synchronous-only (no awaits inside)
   server.on('error', (err) => {
     process.stderr.write(`forge-service listen error: ${err.message}\n`);
     process.exit(1);
   });
-  server.listen(port, bindHost, async () => {
-    writeLock(port);
-    process.stdout.write(`forge-service started on ${bindHost}:${port}${sidecarMode ? ' (sidecar mode)' : ''}\n`);
-
-    // Load .env after lock is written
-    const envFile = loadDotEnv(resolve(PROJECT_ROOT, '.env'));
-    const env = { ...process.env, ...envFile };
-
-    // FORGE_MCP_KEY: check .env file first, then process.env
-    // Empty string is treated as unset (fail-closed)
-    const rawKey = envFile.FORGE_MCP_KEY ?? process.env.FORGE_MCP_KEY ?? '';
-    forgeMcpKey = rawKey.trim() || null;
-
-    // Initialize DB; if it fails, log and continue without MCP
-    try {
-      const dbPath = resolve(PROJECT_ROOT, config.dbPath || 'forge.db');
-      mcpDb = getDb(dbPath);
-      mcpConfig = config;
-      process.stdout.write('[forge-service] MCP server initialized\n');
-
-      // Build sidecar context using the exported function
-      sidecarCtx = await buildSidecarContext(config, mcpDb, env);
-
-      // Seed agents from config.agents[] if defined
-      try {
-        sidecarCtx.agentRegistry.seedFromConfig();
-        const allAgents = sidecarCtx.agentRegistry.getAllAgents();
-        if (allAgents.length > 0) {
-          process.stdout.write(`[forge-service] Agent registry seeded: ${allAgents.length} agent(s)\n`);
-        }
-      } catch (err) {
-        process.stderr.write(`[forge-service] Agent seeding failed: ${err.message}\n`);
+  await new Promise((res, rej) => {
+    server.once('error', rej);
+    server.listen(port, bindHost, () => {
+      server.removeListener('error', rej);
+      writeLock(port);
+      process.stdout.write(`forge-service started on ${bindHost}:${port}${sidecarMode ? ' (sidecar mode)' : ''}\n`);
+      if (sidecarMode) {
+        process.stdout.write(`[forge-service] Sidecar ready on ${bindHost}:${port}\n`);
       }
-      process.stdout.write('[forge-service] Sidecar context initialized\n');
-    } catch (err) {
-      process.stderr.write(`[forge-service] MCP server init failed (MCP disabled): ${err.message}\n`);
-      mcpDb = null;
-      mcpConfig = null;
-    }
-
-    // In sidecar mode: disable watchdog, enable WAL, start drift monitor
-    if (sidecarMode) {
-      clearInterval(watchdog);
-      if (mcpDb) {
-        try {
-          mcpDb.pragma('journal_mode = WAL');
-          process.stdout.write('[forge-service] SQLite WAL mode enabled\n');
-        } catch (err) {
-          process.stderr.write(`[forge-service] WAL mode failed: ${err.message}\n`);
-        }
-        const driftMonitor = createDriftMonitor(config, mcpDb);
-        driftMonitor.start();
-        process.stdout.write('[forge-service] Background drift monitor started\n');
-      }
-      process.stdout.write(`[forge-service] Sidecar ready on ${bindHost}:${port}\n`);
-    }
+      res();
+    });
   });
 }
 
 // Guard: only auto-execute when run directly (not when imported as a library)
-const isDirectRun = process.argv[1] &&
-  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+let isDirectRun = false;
+try {
+  isDirectRun = Boolean(process.argv[1]) &&
+    realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch {
+  // broken symlink or unusual runner — treat as library import
+}
 if (isDirectRun) {
   main().catch((err) => {
     process.stderr.write(`forge-service failed: ${err.message}\n`);

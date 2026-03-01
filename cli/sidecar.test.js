@@ -59,7 +59,7 @@ describe('createSidecar', () => {
 
   it('starts a server and /health returns 200', async () => {
     const { createSidecar } = await import('./sidecar.js');
-    const sidecar = await createSidecar({}, { port: 0, host: '127.0.0.1' });
+    const sidecar = await createSidecar({ auth: { mode: 'trust' } }, { port: 0, host: '127.0.0.1' });
     instances.push(sidecar);
 
     const addr = sidecar.server.address();
@@ -73,7 +73,7 @@ describe('createSidecar', () => {
 
   it('returns server that is not listening when autoListen=false', async () => {
     const { createSidecar } = await import('./sidecar.js');
-    const sidecar = await createSidecar({}, { autoListen: false });
+    const sidecar = await createSidecar({ auth: { mode: 'trust' } }, { autoListen: false });
     instances.push(sidecar);
 
     expect(sidecar.server).toBeTruthy();
@@ -91,7 +91,7 @@ describe('createSidecar', () => {
 
   it('close() stops server and closes DB', async () => {
     const { createSidecar } = await import('./sidecar.js');
-    const sidecar = await createSidecar({}, { port: 0, host: '127.0.0.1' });
+    const sidecar = await createSidecar({ auth: { mode: 'trust' } }, { port: 0, host: '127.0.0.1' });
     // Don't push to instances — we close manually
     const port = sidecar.server.address().port;
 
@@ -109,6 +109,7 @@ describe('createSidecar', () => {
   it('seeds agents from config', async () => {
     const { createSidecar } = await import('./sidecar.js');
     const sidecar = await createSidecar({
+      auth: { mode: 'trust' },
       adminKey: 'test-admin-key',
       agents: [
         { id: 'support', displayName: 'Support Agent' },
@@ -156,12 +157,46 @@ describe('createSidecar', () => {
 
   it('returns 404 for unknown routes', async () => {
     const { createSidecar } = await import('./sidecar.js');
-    const sidecar = await createSidecar({}, { port: 0, host: '127.0.0.1' });
+    const sidecar = await createSidecar({ auth: { mode: 'trust' } }, { port: 0, host: '127.0.0.1' });
     instances.push(sidecar);
 
     const port = sidecar.server.address().port;
     const res = await httpGet(port, '/nonexistent');
     expect(res.status).toBe(404);
+  });
+
+  it('close() is idempotent — teardown runs only once even when called twice', async () => {
+    // Verify that calling close() twice does not double-close Redis/Postgres/SQLite.
+    // We spy on ctx._pgPool and db.close via the returned ctx object.
+    const { createSidecar } = await import('./sidecar.js');
+    const sidecar = await createSidecar({ auth: { mode: 'trust' } }, { port: 0, host: '127.0.0.1', autoListen: true });
+
+    // Inject a spy on the db that the sidecar holds internally.
+    // ctx.db is the same db instance created inside createSidecar.
+    let closeCallCount = 0;
+    const originalClose = sidecar.ctx.db.close.bind(sidecar.ctx.db);
+    sidecar.ctx.db.close = () => {
+      closeCallCount++;
+      try { originalClose(); } catch { /* ignore */ }
+    };
+
+    // Call close() twice in parallel — only one teardown should execute.
+    await Promise.all([sidecar.close(), sidecar.close()]);
+
+    expect(closeCallCount).toBe(1);
+  });
+
+  it('partial config missing optional fields does not throw (mergeDefaults runs before validateConfig)', async () => {
+    // A config with no auth (other than explicit trust mode), no conversation, no sidecar fields
+    // should succeed because mergeDefaults fills in all required defaults before validation runs.
+    const { createSidecar } = await import('./sidecar.js');
+    // Provide only adminKey + explicit trust mode — all other fields rely on defaults
+    const sidecar = await createSidecar({ adminKey: 'k', auth: { mode: 'trust' } }, { autoListen: false });
+    instances.push(sidecar);
+
+    expect(sidecar.ctx).toBeTruthy();
+    expect(sidecar.ctx.config.auth.mode).toBe('trust');
+    expect(sidecar.ctx.config.defaultHitlLevel).toBe('cautious');
   });
 });
 

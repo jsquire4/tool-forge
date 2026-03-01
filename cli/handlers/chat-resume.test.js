@@ -81,11 +81,29 @@ describe('handleChatResume', () => {
     expect(res.writeHead).toHaveBeenCalledWith(401, expect.any(Object));
   });
 
-  it('returns 410 for expired/invalid token', async () => {
+  it('returns 400 when resumeToken is missing', async () => {
     const token = makeJwt({ sub: 'user-1' });
     const res = makeRes();
-    await handleChatResume(makeReq({ resumeToken: 'invalid' }, token), res, makeCtx(db));
-    expect(res.writeHead).toHaveBeenCalledWith(410, expect.any(Object));
+    await handleChatResume(makeReq({ confirmed: true }, token), res, makeCtx(db));
+    expect(res.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+    expect(res.body.error).toMatch(/resumeToken/);
+  });
+
+  it('returns 501 when hitlEngine is absent in ctx', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+    const ctx = makeCtx(db);
+    ctx.hitlEngine = null;
+    await handleChatResume(makeReq({ resumeToken: 'abc', confirmed: true }, token), res, ctx);
+    expect(res.writeHead).toHaveBeenCalledWith(501, expect.any(Object));
+    expect(res.body.error).toMatch(/HITL engine not available/);
+  });
+
+  it('returns 404 for expired/invalid token when confirmed=true', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const res = makeRes();
+    await handleChatResume(makeReq({ resumeToken: 'invalid', confirmed: true }, token), res, makeCtx(db));
+    expect(res.writeHead).toHaveBeenCalledWith(404, expect.any(Object));
   });
 
   it('valid token + confirmed → SSE resumes', async () => {
@@ -118,18 +136,95 @@ describe('handleChatResume', () => {
     expect(eventLines).toContain('event: done');
   });
 
-  it('valid token + rejected → cancellation', async () => {
+  it('confirmed: false (boolean) returns 200 Cancelled WITHOUT calling hitlEngine.resume', async () => {
     const token = makeJwt({ sub: 'user-1' });
     const ctx = makeCtx(db);
-    const resumeToken = await ctx.hitlEngine.pause({ data: 'test' });
+
+    const resumeSpy = vi.fn();
+    ctx.hitlEngine = {
+      shouldPause: vi.fn(),
+      resume: resumeSpy,
+      pause: vi.fn()
+    };
 
     const res = makeRes();
     await handleChatResume(
-      makeReq({ resumeToken, confirmed: false }, token),
+      makeReq({ resumeToken: 'some-token', confirmed: false }, token),
       res, ctx
     );
 
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
     expect(res.body.message).toBe('Cancelled');
+    expect(resumeSpy).not.toHaveBeenCalled();
+  });
+
+  it('confirmed: "false" (string) returns 200 Cancelled WITHOUT calling hitlEngine.resume', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const ctx = makeCtx(db);
+
+    const resumeSpy = vi.fn();
+    ctx.hitlEngine = {
+      shouldPause: vi.fn(),
+      resume: resumeSpy,
+      pause: vi.fn()
+    };
+
+    const res = makeRes();
+    await handleChatResume(
+      makeReq({ resumeToken: 'some-token', confirmed: 'false' }, token),
+      res, ctx
+    );
+
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    expect(res.body.message).toBe('Cancelled');
+    expect(resumeSpy).not.toHaveBeenCalled();
+  });
+
+  it('confirmed: true calls hitlEngine.resume and proceeds with streaming', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const ctx = makeCtx(db);
+
+    // Pause a state
+    const resumeToken = await ctx.hitlEngine.pause({
+      conversationMessages: [{ role: 'user', content: 'test' }],
+      sessionId: 'sess-confirm'
+    });
+
+    reactLoop.mockReturnValue((async function* () {
+      yield { type: 'text', content: 'Resumed successfully!' };
+      yield { type: 'done', usage: {} };
+    })());
+
+    const res = makeRes();
+    await handleChatResume(
+      makeReq({ resumeToken, confirmed: true }, token),
+      res, ctx
+    );
+
+    // Should have SSE headers (streaming started)
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
+      'Content-Type': 'text/event-stream'
+    }));
+    const eventLines = res._chunks.join('');
+    expect(eventLines).toContain('event: text');
+    expect(eventLines).toContain('event: done');
+  });
+
+  it('valid token + confirmed: false → cancellation (legacy test kept)', async () => {
+    const token = makeJwt({ sub: 'user-1' });
+    const ctx = makeCtx(db);
+
+    const resumeSpy = vi.spyOn(ctx.hitlEngine, 'resume');
+
+    const res = makeRes();
+    await handleChatResume(
+      makeReq({ resumeToken: 'any-token', confirmed: false }, token),
+      res, ctx
+    );
+
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    expect(res.body.message).toBe('Cancelled');
+    // CRITICAL: resume must NOT be called when user cancels
+    expect(resumeSpy).not.toHaveBeenCalled();
   });
 });

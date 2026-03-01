@@ -39,8 +39,8 @@ export class SqliteConversationStore {
 
     // Prepare statements once to avoid repeated compilation
     this._stmtInsert = db.prepare(`
-      INSERT INTO conversations (session_id, stage, role, content, agent_id, created_at)
-      VALUES (@session_id, @stage, @role, @content, @agent_id, @created_at)
+      INSERT INTO conversations (session_id, stage, role, content, agent_id, user_id, created_at)
+      VALUES (@session_id, @stage, @role, @content, @agent_id, @user_id, @created_at)
     `);
     this._stmtHistory = db.prepare(`
       SELECT * FROM conversations WHERE session_id = ? ORDER BY created_at ASC
@@ -64,13 +64,14 @@ export class SqliteConversationStore {
     return randomUUID();
   }
 
-  async persistMessage(sessionId, stage, role, content, agentId = null) {
+  async persistMessage(sessionId, stage, role, content, agentId = null, userId = null) {
     this._stmtInsert.run({
       session_id: sessionId,
       stage,
       role,
       content,
       agent_id: agentId ?? null,
+      user_id: userId ?? null,
       created_at: new Date().toISOString()
     });
   }
@@ -81,6 +82,40 @@ export class SqliteConversationStore {
 
   async getIncompleteSessions() {
     return this._stmtIncomplete.all();
+  }
+
+  async listSessions(userId) {
+    const rows = this._db.prepare(
+      `SELECT session_id, agent_id, user_id,
+              MAX(created_at) AS last_updated,
+              MIN(created_at) AS started_at
+       FROM conversations
+       WHERE user_id = ?
+       GROUP BY session_id
+       ORDER BY last_updated DESC`
+    ).all(userId ?? null);
+    return rows.map(r => ({
+      sessionId: r.session_id,
+      agentId: r.agent_id ?? null,
+      userId: r.user_id ?? null,
+      startedAt: r.started_at,
+      lastUpdated: r.last_updated
+    }));
+  }
+
+  async deleteSession(sessionId, userId) {
+    const result = this._db.prepare(
+      'DELETE FROM conversations WHERE session_id = ? AND user_id = ?'
+    ).run(sessionId, userId ?? null);
+    return result.changes > 0;
+  }
+
+  async getSessionUserId(sessionId) {
+    const row = this._db.prepare(
+      'SELECT user_id FROM conversations WHERE session_id = ? LIMIT 1'
+    ).get(sessionId);
+    if (!row) return undefined;
+    return row.user_id ?? null;
   }
 
   async close() {
@@ -130,7 +165,7 @@ export class RedisConversationStore {
     return randomUUID();
   }
 
-  async persistMessage(sessionId, stage, role, content, agentId = null) {
+  async persistMessage(sessionId, stage, role, content, agentId = null, userId = null) {
     const client = await this._connect();
     const msgKey = `forge:conv:${sessionId}:msgs`;
 
@@ -140,18 +175,20 @@ export class RedisConversationStore {
       role,
       content,
       agent_id: agentId ?? null,
+      user_id: userId ?? null,
       created_at: new Date().toISOString()
     });
 
-    await client.rPush(msgKey, row);
-    await client.expire(msgKey, this._ttl);
-
+    // Atomic pipeline — rPush + expire + active-set update in one round-trip
+    const pl = client.multi();
+    pl.rPush(msgKey, row);
+    pl.expire(msgKey, this._ttl);
     if (role === 'system' && content === '[COMPLETE]') {
-      await client.sRem(ACTIVE_SET_KEY, sessionId);
+      pl.sRem(ACTIVE_SET_KEY, sessionId);
     } else {
-      // Keep session in the active set; set TTL to match messages
-      await client.sAdd(ACTIVE_SET_KEY, sessionId);
+      pl.sAdd(ACTIVE_SET_KEY, sessionId);
     }
+    await pl.exec();
   }
 
   async getHistory(sessionId) {
@@ -186,6 +223,56 @@ export class RedisConversationStore {
       .sort((a, b) => b.last_updated.localeCompare(a.last_updated));
   }
 
+  async listSessions(userId) {
+    const client = await this._connect();
+    const sessionIds = await client.sMembers(ACTIVE_SET_KEY);
+    const sessions = [];
+    for (const sessionId of sessionIds) {
+      const firstMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, 0);
+      if (!firstMsg) continue;
+      try {
+        const msg = JSON.parse(firstMsg);
+        if (msg.user_id !== userId) continue;
+        const lastMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, -1);
+        const last = lastMsg ? JSON.parse(lastMsg) : msg;
+        sessions.push({
+          sessionId,
+          agentId: msg.agent_id ?? null,
+          userId: msg.user_id ?? null,
+          startedAt: msg.created_at,
+          lastUpdated: last.created_at
+        });
+      } catch { /* skip malformed */ }
+    }
+    return sessions.sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
+  }
+
+  async deleteSession(sessionId, userId) {
+    const client = await this._connect();
+    // Verify ownership via first message
+    const firstMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, 0);
+    if (!firstMsg) return false;
+    try {
+      const msg = JSON.parse(firstMsg);
+      if (msg.user_id !== userId) return false;
+    } catch { return false; }
+    const pl = client.multi();
+    pl.del(`forge:conv:${sessionId}:msgs`);
+    pl.sRem(ACTIVE_SET_KEY, sessionId);
+    await pl.exec();
+    return true;
+  }
+
+  async getSessionUserId(sessionId) {
+    const client = await this._connect();
+    const firstMsg = await client.lIndex(`forge:conv:${sessionId}:msgs`, 0);
+    if (!firstMsg) return undefined;
+    try {
+      const msg = JSON.parse(firstMsg);
+      return msg.user_id ?? null;
+    } catch { return undefined; }
+  }
+
   async close() {
     if (this._client) {
       await this._client.quit();
@@ -215,6 +302,7 @@ export class PostgresConversationStore {
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         agent_id TEXT,
+        user_id TEXT,
         created_at TEXT NOT NULL
       )
     `);
@@ -225,12 +313,12 @@ export class PostgresConversationStore {
     return randomUUID();
   }
 
-  async persistMessage(sessionId, stage, role, content, agentId = null) {
+  async persistMessage(sessionId, stage, role, content, agentId = null, userId = null) {
     await this._ensureTable();
     await this._pool.query(
-      `INSERT INTO conversations (session_id, stage, role, content, agent_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [sessionId, stage, role, content, agentId ?? null, new Date().toISOString()]
+      `INSERT INTO conversations (session_id, stage, role, content, agent_id, user_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [sessionId, stage, role, content, agentId ?? null, userId ?? null, new Date().toISOString()]
     );
   }
 
@@ -259,6 +347,46 @@ export class PostgresConversationStore {
       ORDER BY last_updated DESC
     `);
     return rows;
+  }
+
+  async listSessions(userId) {
+    await this._ensureTable();
+    const result = await this._pool.query(
+      `SELECT session_id, agent_id, user_id,
+              MAX(created_at) AS last_updated,
+              MIN(created_at) AS started_at
+       FROM conversations
+       WHERE user_id = $1
+       GROUP BY session_id, agent_id, user_id
+       ORDER BY last_updated DESC`,
+      [userId ?? null]
+    );
+    return result.rows.map(r => ({
+      sessionId: r.session_id,
+      agentId: r.agent_id ?? null,
+      userId: r.user_id ?? null,
+      startedAt: r.started_at,
+      lastUpdated: r.last_updated
+    }));
+  }
+
+  async deleteSession(sessionId, userId) {
+    await this._ensureTable();
+    const result = await this._pool.query(
+      'DELETE FROM conversations WHERE session_id = $1 AND user_id = $2',
+      [sessionId, userId ?? null]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getSessionUserId(sessionId) {
+    await this._ensureTable();
+    const result = await this._pool.query(
+      'SELECT user_id FROM conversations WHERE session_id = $1 LIMIT 1',
+      [sessionId]
+    );
+    if (result.rows.length === 0) return undefined;
+    return result.rows[0].user_id ?? null;
   }
 
   async close() {

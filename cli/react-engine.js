@@ -170,18 +170,47 @@ export async function* reactLoop(opts) {
       toolResults.push({ toolCall, result });
     }
 
-    // Add single assistant message with all tool calls, then each tool result
-    conversationMessages.push({
-      role: 'assistant',
-      content: response.text ?? '',
-      tool_calls: toolResults.map(({ toolCall }) => ({ id: toolCall.id, name: toolCall.name, input: toolCall.input }))
-    });
-    for (const { toolCall, result } of toolResults) {
+    // Add tool call history in the correct format for the provider
+    if (provider === 'anthropic') {
+      // Anthropic expects assistant message with content array, then user message with tool_result blocks
       conversationMessages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: JSON.stringify(result.body)
+        role: 'assistant',
+        content: [
+          ...(response.text ? [{ type: 'text', text: response.text }] : []),
+          ...toolResults.map(({ toolCall }) => ({
+            type: 'tool_use',
+            id: toolCall.id,
+            name: toolCall.name,
+            input: toolCall.input
+          }))
+        ]
       });
+      conversationMessages.push({
+        role: 'user',
+        content: toolResults.map(({ toolCall, result }) => ({
+          type: 'tool_result',
+          tool_use_id: toolCall.id,
+          content: JSON.stringify(result.body)
+        }))
+      });
+    } else {
+      // OpenAI-compatible: assistant message with tool_calls array, then individual tool role messages
+      conversationMessages.push({
+        role: 'assistant',
+        content: response.text || null,
+        tool_calls: toolResults.map(({ toolCall }) => ({
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input
+        }))
+      });
+      for (const { toolCall, result } of toolResults) {
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result.body)
+        });
+      }
     }
   }
 

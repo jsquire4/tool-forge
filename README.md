@@ -40,10 +40,10 @@ See [docs/tui-workflow.md](docs/tui-workflow.md) for a start-to-finish walkthrou
 
 ```bash
 # Global install (available in all projects)
-cp -r tool-forge/skills/forge-tool     ~/.claude/skills/
-cp -r tool-forge/skills/forge-eval     ~/.claude/skills/
-cp -r tool-forge/skills/forge-mcp      ~/.claude/skills/
-cp -r tool-forge/skills/forge-verifier ~/.claude/skills/
+cp -r node_modules/agent-tool-forge/skills/forge-tool     ~/.claude/skills/
+cp -r node_modules/agent-tool-forge/skills/forge-eval     ~/.claude/skills/
+cp -r node_modules/agent-tool-forge/skills/forge-mcp      ~/.claude/skills/
+cp -r node_modules/agent-tool-forge/skills/forge-verifier ~/.claude/skills/
 ```
 
 Then in any Claude Code session:
@@ -123,23 +123,23 @@ All subpaths ship with TypeScript declarations.
 
 ```js
 import { createSidecar }      from 'agent-tool-forge'               // main entry
-import { reactLoop }           from 'tool-forge/react-engine'
-import { createAuth }          from 'tool-forge/auth'
-import { makeConversationStore } from 'tool-forge/conversation-store'
-import { mergeDefaults }       from 'tool-forge/config'
-import { makeHitlEngine }      from 'tool-forge/hitl-engine'
-import { makePromptStore }     from 'tool-forge/prompt-store'
-import { makePreferenceStore } from 'tool-forge/preference-store'
-import { makeRateLimiter }     from 'tool-forge/rate-limiter'
-import { getDb }               from 'tool-forge/db'
-import { initSSE }             from 'tool-forge/sse'
+import { reactLoop }           from 'agent-tool-forge/react-engine'
+import { createAuth }          from 'agent-tool-forge/auth'
+import { makeConversationStore } from 'agent-tool-forge/conversation-store'
+import { mergeDefaults }       from 'agent-tool-forge/config'
+import { makeHitlEngine }      from 'agent-tool-forge/hitl-engine'
+import { makePromptStore }     from 'agent-tool-forge/prompt-store'
+import { makePreferenceStore } from 'agent-tool-forge/preference-store'
+import { makeRateLimiter }     from 'agent-tool-forge/rate-limiter'
+import { getDb }               from 'agent-tool-forge/db'
+import { initSSE }             from 'agent-tool-forge/sse'
 import {
   PostgresStore,
   PostgresEvalStore,
   PostgresChatAuditStore,
   PostgresVerifierStore
-}                              from 'tool-forge/postgres-store'
-import { buildSidecarContext, createSidecarRouter } from 'tool-forge/forge-service'
+}                              from 'agent-tool-forge/postgres-store'
+import { buildSidecarContext, createSidecarRouter } from 'agent-tool-forge/forge-service'
 ```
 
 ---

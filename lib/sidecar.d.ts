@@ -44,9 +44,18 @@ export interface SidecarInstance {
 
 export function createSidecar(config?: Partial<SidecarConfig>, options?: SidecarOptions): Promise<SidecarInstance>;
 
+export interface SidecarRouterOptions {
+  /** Absolute path to serve static files from for /widget/* routes. Defaults to package widget/. */
+  widgetDir?: string;
+  /** Optional async handler for /mcp routes. */
+  mcpHandler?: (req: object, res: object) => Promise<void> | void;
+  /** Called before the 404 fallback. Return true if the request was handled. */
+  customRoutes?: (req: object, res: object, ctx: SidecarContext) => Promise<boolean> | boolean;
+}
+
 // Advanced consumers
-export function buildSidecarContext(config: SidecarConfig, db: object, env?: Record<string, string>, opts?: object): Promise<SidecarContext>;
-export function createSidecarRouter(ctx: SidecarContext, opts?: object): (req: object, res: object) => void;
+export function buildSidecarContext(config: SidecarConfig, db: object, env?: Record<string, string>, opts?: { configPath?: string }): Promise<SidecarContext>;
+export function createSidecarRouter(ctx: SidecarContext, opts?: SidecarRouterOptions): (req: object, res: object) => Promise<void>;
 
 export { createAuth } from './auth.js';
 export type { AuthResult, AuthConfig, Authenticator } from './auth.js';
@@ -82,7 +91,7 @@ export class AgentRegistry {
 }
 
 export class VerifierRunner {
-  constructor(db: object, config?: object, workerPool?: object);
+  constructor(db: object, config?: object, pgPool?: object | null, workerPool?: object | null);
   loadFromDb(db: object): Promise<void>;
   run(toolName: string, args: object, result: unknown): Promise<Array<{ outcome: 'pass' | 'warn' | 'block'; message: string | null; verifier: string }>>;
   destroy(): void;

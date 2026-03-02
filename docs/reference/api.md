@@ -285,11 +285,46 @@ The component handles SSE streaming, HITL confirmation dialogs, and conversation
 
 ## Authentication
 
-All endpoints (except `/health`) require a valid JWT in the `Authorization` header.
+The sidecar uses tiered authentication. Routes fall into one of four tiers:
 
-The sidecar validates the JWT using `auth.signingKey` from `forge.config.json`. The user ID is extracted from the claims at `auth.claimsPath` (default: `sub`).
+| Tier | Name | Routes | Auth required |
+|------|------|--------|---------------|
+| 0 | Open | `GET /health` | None |
+| 1 | App (JWT) | `POST /agent-api/chat`, `POST /agent-api/chat-sync`, `POST /agent-api/chat/resume`, `GET /agent-api/tools`, `GET /agent-api/conversations*`, `GET /agent-api/user/preferences`, `PUT /agent-api/user/preferences`, `/widget/*`, `/mcp*` | Bearer JWT |
+| 2 | Admin (token) | `GET /forge-admin/config`, `PUT /forge-admin/config/:section`, `/forge-admin/agents*`, `GET /agent-api/evals/summary`, `GET /agent-api/evals/runs` | Static Bearer token |
+| 3 | Metrics | `GET /metrics` | Static Bearer token (open if `auth.metricsToken` not set) |
 
-The user JWT is forwarded as-is to all host app API calls the sidecar makes via `mcpRouting` — enabling row-level auth in the host app without any credential translation.
+Versioned paths (`/agent-api/v1/*`) are normalized to `/agent-api/*` automatically.
+
+Setting `auth.mode: 'none'` in `forge.config.json` bypasses all auth checks (intended for local development only).
+
+### App tier (JWT)
+
+Tier 1 routes require a valid JWT in the `Authorization` header:
+
+```
+Authorization: Bearer <JWT>
+```
+
+The JWT is validated using `auth.signingKey` from `forge.config.json` when `auth.mode` is `'verify'`. In `'trust'` mode the signature is not checked — the payload is decoded directly (suitable when the sidecar sits behind a trusted API gateway).
+
+The user ID is extracted from the claims at `auth.claimsPath` (default: `sub`). The JWT is forwarded as-is to all host app API calls the sidecar makes via `mcpRouting` — enabling row-level auth in the host app without credential translation.
+
+Tokens may be passed as a query parameter instead of the Authorization header: `?token=<JWT>`.
+
+### Admin tier (static token)
+
+Tier 2 routes require a static Bearer token matching `auth.adminToken` (or the deprecated `adminKey`) in `forge.config.json`. Both fields support `${ENV_VAR}` references:
+
+```json
+{ "auth": { "adminToken": "${FORGE_ADMIN_KEY}" } }
+```
+
+If no admin token is configured and `auth.mode` is not `'none'`, admin routes return `503 Service Unavailable`.
+
+### Metrics tier (optional token)
+
+`GET /metrics` is open by default. Set `auth.metricsToken` to require a Bearer token from your scraper.
 
 ---
 

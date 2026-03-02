@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.7] — 2026-03-01
+
+### Fixed
+
+- **README import paths** — all subpath imports now use `agent-tool-forge/…` (were incorrectly `tool-forge/…`)
+- **README skills install** — `cp` commands now reference `node_modules/agent-tool-forge/skills/…`
+- **`pgPool` missing `.on('error')` handler** — idle client disconnections no longer crash the Node process
+- **`customRoutes` callback unhandled rejection** — errors in consumer-provided route handlers now return `500` instead of crashing
+- **Preferences route method-not-allowed** — `PATCH`, `DELETE`, etc. on `/agent-api/user/preferences` now correctly return `405` (was an implicit `else` that could be confusing)
+- **`auth.signingKey` env-var references** — `${VAR}` is now resolved at startup via `resolveSecret`; `buildSidecarContext` stores resolved auth config on the context object
+- **`config.d.ts` `AuthConfig`** — added `adminToken`, `metricsToken`, and `mode: 'none'` (TypeScript consumers can now set all three without a type error)
+- **`config.d.ts` `SidecarConfig`** — added `agent`, `gates`, and `fixtures` config blocks; removed `sidecar.enabled` (did nothing); clarified `sidecar.port` scope
+- **`sidecar.d.ts` `VerifierRunner`** — fixed constructor signature: `pgPool` is the 3rd param (was `workerPool`)
+- **`sidecar.d.ts` `createSidecarRouter`** — `opts` is now typed as `SidecarRouterOptions` with `widgetDir`, `mcpHandler`, and `customRoutes`; `buildSidecarContext` `opts` typed as `{ configPath?: string }`
+- **`hitl-engine.d.ts`** — added `destroy()` method; `resume()` return type corrected to `Promise<unknown | null>`
+- **`config.sidecar.enabled`** — removed from defaults (was a no-op field); `sidecar.port` documented as direct-run-only
+
+### Added
+
+- **`config/` directory in npm `files`** — `forge.config.template.json` now ships with the package
+- **Auth tier table in `docs/reference/api.md`** — full route → tier → auth-requirement table; replaces the incorrect "all non-health routes require JWT" statement
+- **`AgentRouterConfig`, `GatesConfig`, `FixturesConfig` interfaces** in `config.d.ts`
+
+---
+
 ## [0.4.6] — 2026-03-01
 
 ### Added

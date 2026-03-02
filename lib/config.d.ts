@@ -23,9 +23,13 @@ export interface DatabaseConfig {
 }
 
 export interface AuthConfig {
-  mode?: 'trust' | 'verify';
-  signingKey?: string;
+  mode?: 'trust' | 'verify' | 'none';
+  signingKey?: string | null;
   claimsPath?: string;
+  /** Admin Bearer token. Replaces top-level `adminKey`. Supports `${VAR}` env references. */
+  adminToken?: string | null;
+  /** Metrics scrape token for /metrics. Supports `${VAR}` env references. */
+  metricsToken?: string | null;
 }
 
 export interface AgentConfig {
@@ -43,6 +47,26 @@ export interface AgentConfig {
   enabled?: number;
 }
 
+export interface AgentRouterConfig {
+  endpoint?: string | null;
+  method?: string;
+  headers?: Record<string, string>;
+  inputField?: string;
+  outputField?: string;
+  sessionField?: string;
+}
+
+export interface GatesConfig {
+  passRate?: number | null;
+  maxCost?: number | null;
+  p95LatencyMs?: number | null;
+}
+
+export interface FixturesConfig {
+  dir?: string;
+  ttlDays?: number;
+}
+
 export interface SidecarConfig {
   auth?: AuthConfig;
   defaultModel?: string;
@@ -50,14 +74,19 @@ export interface SidecarConfig {
   allowUserModelSelect?: boolean;
   allowUserHitlConfig?: boolean;
   systemPrompt?: string;
-  adminKey?: string;
+  /** @deprecated Use `auth.adminToken` instead. */
+  adminKey?: string | null;
   conversation?: ConversationConfig;
   rateLimit?: RateLimitConfig;
   verification?: VerificationConfig;
   database?: DatabaseConfig;
-  sidecar?: { enabled?: boolean; port?: number };
+  /** `port` is used in direct-run mode only (`node lib/forge-service.js`). `createSidecar()` uses `SidecarOptions.port`. */
+  sidecar?: { port?: number };
   agents?: AgentConfig[];
   costs?: Record<string, { input: number; output: number }>;
+  agent?: AgentRouterConfig;
+  gates?: GatesConfig;
+  fixtures?: FixturesConfig;
 }
 
 export const CONFIG_DEFAULTS: SidecarConfig;

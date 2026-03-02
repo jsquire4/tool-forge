@@ -38,12 +38,14 @@ See [docs/tui-workflow.md](docs/tui-workflow.md) for a start-to-finish walkthrou
 
 ### Install Claude Code Skills
 
+The Claude Code skills (`/forge-tool`, `/forge-eval`, `/forge-mcp`, `/forge-verifier`) are maintained separately from the npm package. Clone the repo and copy them:
+
 ```bash
-# Global install (available in all projects)
-cp -r node_modules/agent-tool-forge/skills/forge-tool     ~/.claude/skills/
-cp -r node_modules/agent-tool-forge/skills/forge-eval     ~/.claude/skills/
-cp -r node_modules/agent-tool-forge/skills/forge-mcp      ~/.claude/skills/
-cp -r node_modules/agent-tool-forge/skills/forge-verifier ~/.claude/skills/
+git clone https://github.com/jsquire4/agent-tool-forge.git /tmp/agent-tool-forge
+cp -r /tmp/agent-tool-forge/skills/forge-tool     ~/.claude/skills/
+cp -r /tmp/agent-tool-forge/skills/forge-eval     ~/.claude/skills/
+cp -r /tmp/agent-tool-forge/skills/forge-mcp      ~/.claude/skills/
+cp -r /tmp/agent-tool-forge/skills/forge-verifier ~/.claude/skills/
 ```
 
 Then in any Claude Code session:

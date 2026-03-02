@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.8] — 2026-03-01
+
+### Fixed (audit pass on 0.4.7)
+
+- **Security: `auth.signingKey` resolution fallback removed** — previously, if `${ENV_VAR}` was set as the signingKey and the env var was absent, the code fell back to the literal `"${ENV_VAR}"` string as the HMAC key; now it correctly resolves to `null`, causing `createAuth` to fail-closed in verify mode
+- **`VerifierRunner` declaration corrected** — method was declared as `run()` (wrong) and is actually `verify()`; return field was `verifier` (wrong), is actually `verifierName`; added missing `registerVerifiers()` and `logResult()` public method declarations
+- **`validateConfig` dead branch replaced** — `sidecar.enabled` check (always false since field removed) replaced with unconditional `auth.mode === 'verify'` signingKey check; validation now correctly fires regardless of sidecar config
+- **`init.js` sidecar config** — stops writing `enabled: true` (field removed from schema); written config now matches `CONFIG_DEFAULTS`
+- **`HitlEngine.destroy()` typed correctly** — was `Promise<void>` (wrong), implementation is synchronous; now `void`
+- **`HitlEngine.resume()` return type** — `Promise<unknown | null>` → `Promise<object | null>` (more precise, matches JSDoc)
+- **`resolveSecret` and `authenticateAdmin` re-exported from `sidecar.d.ts`** — consumers importing from `agent-tool-forge` can now use both without importing internal paths
+- **`createDirectServer` preferences 405** — fixed structural `else`-on-PUT pattern (parity with `createSidecarRouter` fix from 0.4.7)
+- **`customRoutes` error handler** — added `res.headersSent` guard before `sendJson(500)` to prevent double-write when a streaming handler throws mid-response
+- **README skills install** — corrected instructions to clone repo; removed broken `node_modules/…/skills/` path that referenced a non-existent directory
+
+---
+
 ## [0.4.7] — 2026-03-01
 
 ### Fixed

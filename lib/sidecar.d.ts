@@ -57,7 +57,7 @@ export interface SidecarRouterOptions {
 export function buildSidecarContext(config: SidecarConfig, db: object, env?: Record<string, string>, opts?: { configPath?: string }): Promise<SidecarContext>;
 export function createSidecarRouter(ctx: SidecarContext, opts?: SidecarRouterOptions): (req: object, res: object) => Promise<void>;
 
-export { createAuth } from './auth.js';
+export { createAuth, resolveSecret, authenticateAdmin } from './auth.js';
 export type { AuthResult, AuthConfig, Authenticator } from './auth.js';
 
 export { reactLoop } from './react-engine.js';
@@ -93,6 +93,8 @@ export class AgentRegistry {
 export class VerifierRunner {
   constructor(db: object, config?: object, pgPool?: object | null, workerPool?: object | null);
   loadFromDb(db: object): Promise<void>;
-  run(toolName: string, args: object, result: unknown): Promise<Array<{ outcome: 'pass' | 'warn' | 'block'; message: string | null; verifier: string }>>;
+  registerVerifiers(toolName: string, verifiers: object[]): void;
+  verify(toolName: string, args: object, result: unknown): Promise<{ outcome: 'pass' | 'warn' | 'block'; message: string | null; verifierName: string | null }>;
+  logResult(sessionId: string, toolName: string, result: object): void;
   destroy(): void;
 }

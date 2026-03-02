@@ -39,13 +39,13 @@ export class HitlEngine {
    * Retrieve and consume the paused state for a resume token.
    * Returns null if the token has expired or does not exist (does not throw).
    */
-  resume(resumeToken: string): Promise<unknown | null>;
+  resume(resumeToken: string): Promise<object | null>;
 
   /**
    * Tear down any backend connections (Redis subscriber, Postgres pool, etc.).
-   * Call on graceful shutdown.
+   * Call on graceful shutdown. Synchronous.
    */
-  destroy(): Promise<void>;
+  destroy(): void;
 }
 
 /**
